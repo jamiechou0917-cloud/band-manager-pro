@@ -137,7 +137,13 @@ const App = () => {
     if (auth) {
       const unsubAuth = onAuthStateChanged(auth, u => {
         setUser(u);
-        setLoading(false); // 登入狀態確認後關閉 loading
+        setLoading(false);
+        // 如果沒有 user (且不是在預覽環境使用 Custom Token 登入的情況下)，
+        // 為了讓使用者體驗 UI，自動登入體驗帳號。
+        // 注意：部署後若要強制 Google 登入，可移除這行 setTimeout
+        if (!u && typeof __firebase_config !== 'undefined') {
+            setTimeout(() => setUser({ uid: 'demo', displayName: '體驗帳號', photoURL: null }), 1000);
+        }
       });
 
       // 優先使用 Token (預覽用)
@@ -147,8 +153,6 @@ const App = () => {
 
       return () => unsubAuth();
     } else {
-      // 若 Firebase 初始化失敗 (例如 Config 設定錯誤)，停止 Loading 並停留在登入畫面
-      // 不再自動登入體驗帳號，避免誤解
       setLoading(false);
     }
   }, []);
@@ -177,8 +181,13 @@ const App = () => {
   }, [user]);
 
   const handleLogin = async () => {
-    try { await signInWithPopup(auth, googleProvider); } 
-    catch (err) { alert("登入失敗，請檢查 Firebase Console Authentication 設定"); }
+    try { 
+      await signInWithPopup(auth, googleProvider); 
+    } catch (err) { 
+      console.error("Login failed:", err);
+      // 提供更詳細的錯誤指引
+      alert(`登入失敗！\n錯誤代碼: ${err.code}\n\n請檢查以下兩點：\n1. 您的網站網址 (Vercel domain) 是否已加入 Firebase Console 的「Authorized domains」白名單？\n2. Authentication 的 Google 登入功能是否已啟用？`); 
+    }
   };
 
   const handleLogout = async () => {
@@ -618,7 +627,7 @@ const AlcoholManager = ({ alcohols, members, settings }) => {
               <div className="flex-1">
                 <div className="flex justify-between items-start">
                   <h3 className="font-bold text-lg text-[#725E77]">{a.name}</h3>
-                  <div className="flex gap-0.5">{[...Array(5)].map((_, i) => <Star key={i} size={12} className={i < a.rating ? "fill-[#F1CEBA] text-[#F1CEBA]" : "text-[#E0E0D9]"} />)}</div>
+                  <div className="flex gap-0.5">{[...Array(5)].map((_, i) => <Star key={i} size={12} className={i < a.rating ? "fill-[#D6C592] text-[#D6C592]" : "text-[#E0E0D9]"} />)}</div>
                 </div>
                 <p className="text-xs font-bold text-[#8B8C89] mb-2">{a.type}</p>
                 <div className="w-full bg-[#FDFBF7] h-2 rounded-full overflow-hidden mb-2"><div className="bg-[#F1CEBA] h-full rounded-full" style={{width: `${a.level}%`}}></div></div>
