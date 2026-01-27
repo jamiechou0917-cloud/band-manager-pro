@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signInWithCustomToken, signOut } from 'firebase/auth';
+import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signInWithCustomToken, signOut, signInAnonymously } from 'firebase/auth';
 import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { 
   Music2, Mic2, Users, ClipboardList, Beer, Calendar, 
@@ -108,10 +108,8 @@ const DEFAULT_GENERAL_DATA = {
     studioRate: 350, kbRate: 200,     
     studioBankAccount: '(待設定)', miscBankAccount: '(待設定)' 
   },
-  // 這裡改為 practices 陣列結構
-  practices: [
-    { id: 'init-1', date: new Date().toISOString(), title: '本月第一次練團', location: '未定地點' }
-  ]
+  nextPractice: { date: new Date().toISOString(), title: '下次練團', location: '未定地點' },
+  currentMonthSessions: []
 };
 
 const App = () => {
@@ -171,6 +169,7 @@ const App = () => {
   useEffect(() => {
     if (!db || !user) return;
 
+    // 簡化路徑，避免權限錯誤
     const unsubMembers = onSnapshot(collection(db, 'members'), (snap) => {
       setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     }, (error) => {
@@ -212,8 +211,7 @@ const App = () => {
   const renderContent = () => {
     switch (activeTab) {
       case 'dashboard': return <DashboardView members={members} generalData={generalData} alcoholCount={alcohols.length} db={db} role={role} user={user} />;
-      // 修正: 這裡將 generalData.practices 傳入 scheduledDates，實現連動
-      case 'logs': return <SessionLogManager sessions={logs} scheduledDates={generalData.practices || []} members={members} settings={generalData.settings} db={db} role={role} />;
+      case 'logs': return <SessionLogManager sessions={logs} scheduledDates={generalData.currentMonthSessions || []} members={members} settings={generalData.settings} db={db} role={role} />;
       case 'alcohol': return <AlcoholManager alcohols={alcohols} members={members} settings={generalData.settings} db={db} role={role} />;
       case 'tech': return <TechView songs={songs} db={db} />;
       default: return <DashboardView />;
@@ -420,7 +418,6 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
         </div>
       </div>
 
-      {/* 點名表 */}
       <div>
         <div className="flex items-center justify-between px-1 mb-2">
           <h3 className="font-bold text-xl text-[#725E77]">本月練團點名</h3>
@@ -694,7 +691,9 @@ const TrackList = ({ session, db }) => {
 
 // --- 練團費計算機 (限制: Admin 或 財務) ---
 const PracticeFeeCalculator = ({ session, members, settings, role }) => {
-  const [selectedIds, setSelectedIds] = useState(members.filter(m => m.attendance?.includes(session.date)).map(m => m.id));
+  // 自動勾選當天有點名的人
+  const defaultAttendees = members.filter(m => m.attendance?.includes(session.date)).map(m => m.id);
+  const [selectedIds, setSelectedIds] = useState(defaultAttendees.length > 0 ? defaultAttendees : members.map(m => m.id));
   const [hours, setHours] = useState(2);
   const [hasKB, setHasKB] = useState(true);
   const [bankAccount, setBankAccount] = useState(settings?.studioBankAccount || "");
@@ -813,7 +812,7 @@ const MiscFeeCalculator = ({ session, members, settings }) => {
 };
 
 // --- 4. Alcohol Manager (補貨計算機) ---
-const AlcoholManager = ({ alcohols, members, settings, db, appId, role }) => {
+const AlcoholManager = ({ alcohols, members, settings, db, role }) => {
   const [tab, setTab] = useState('list'); // list, calculator
   return (
     <div className="space-y-4 animate-in slide-in-from-right-8">
@@ -887,7 +886,7 @@ const AlcoholFeeCalculator = ({ members, settings }) => {
 };
 
 // --- 5. Tech View ---
-const TechView = ({ songs, db, appId }) => {
+const TechView = ({ songs, db }) => {
   const [viewMode, setViewMode] = useState('list'); // list, grid
   const [filter, setFilter] = useState('all'); // all, cover, tech, gear
 
