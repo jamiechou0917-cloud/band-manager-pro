@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signInWithCustomToken, signOut } from 'firebase/auth';
 import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, setDoc, serverTimestamp } from 'firebase/firestore';
@@ -10,20 +10,19 @@ import {
   MapPin, CalendarPlus, Cake, XCircle, CheckCircle2,
   Wallet, Receipt, Coffee, Gift, Zap, LayoutGrid, List,
   PartyPopper, Headphones, Speaker, Star, Image as ImageIcon, Disc,
-  Ghost, Pencil, Trash2, Lock, Save
+  Ghost, Pencil, Trash2, Lock, Save, MinusCircle
 } from 'lucide-react';
 
 // --- 🔐 1. 超級管理員設定 (最高權限) ---
-// ⚠️ 重要：請確認你登入的 Email 有在下面這個清單裡！
 const ADMIN_EMAILS = [
   "jamie.chou0917@gmail.com", 
   "drummer@gmail.com",
-  "demo@test.com" // 加入體驗帳號，確保預覽時也能看到編輯按鈕
+  "demo@test.com"
 ];
 
-// --- 2. 特殊職位名稱 (需與團員名單中的本名/暱稱一致) ---
-const ROLE_FINANCE_NAME = "陳昱維"; // 財務大臣
-const ROLE_ALCOHOL_NAME = "李家賢"; // 酒水總管
+// --- 2. 特殊職位名稱 ---
+const ROLE_FINANCE_NAME = "陳昱維"; 
+const ROLE_ALCOHOL_NAME = "李家賢"; 
 
 // --- 🎸 樂團專屬設定 ---
 const BAND_LOGO_BASE64 = ""; 
@@ -103,14 +102,16 @@ try {
   }
 } catch (e) { console.error("Firebase init error:", e); }
 
-// --- 預設資料 ---
+// --- 預設資料 (v7.1 更新結構：改為 practices 陣列) ---
 const DEFAULT_GENERAL_DATA = {
   settings: {
     studioRate: 350, kbRate: 200,     
     studioBankAccount: '(待設定)', miscBankAccount: '(待設定)' 
   },
-  nextPractice: { date: new Date().toISOString(), title: '下次練團', location: '未定地點' },
-  currentMonthSessions: []
+  // 改為陣列，支援多場次
+  practices: [
+    { id: 'init-1', date: new Date().toISOString(), title: '本月第一次練團', location: '未定地點' }
+  ]
 };
 
 const App = () => {
@@ -119,8 +120,6 @@ const App = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [imgError, setImgError] = useState(false);
   const [showPrankModal, setShowPrankModal] = useState(false);
-  
-  // --- 權限狀態 ---
   const [role, setRole] = useState({ admin: false, finance: false, alcohol: false });
 
   // 真實資料狀態
@@ -151,22 +150,15 @@ const App = () => {
     }
   }, []);
 
-  // --- 權限計算邏輯 (核心修正：不依賴 members.length) ---
+  // 權限計算
   useEffect(() => {
     if (user) {
       const userEmail = user.email;
-      
-      // 1. 超級管理員 (直接根據 Email 判斷，不需等待團員資料載入)
       const isAdmin = ADMIN_EMAILS.includes(userEmail);
-      
-      // 2. 財務大臣 (找名字是陳昱維的 Email)
       const financeMember = members.find(m => m.realName === ROLE_FINANCE_NAME || m.nickname === ROLE_FINANCE_NAME);
       const isFinance = isAdmin || (financeMember && financeMember.email === userEmail);
-
-      // 3. 酒水總管 (找名字是李家賢的 Email)
       const alcoholMember = members.find(m => m.realName === ROLE_ALCOHOL_NAME || m.nickname === ROLE_ALCOHOL_NAME);
       const isAlcohol = isAdmin || (alcoholMember && alcoholMember.email === userEmail);
-
       setRole({ admin: isAdmin, finance: isFinance, alcohol: isAlcohol });
     } else {
       setRole({ admin: false, finance: false, alcohol: false });
@@ -177,21 +169,18 @@ const App = () => {
   useEffect(() => {
     if (!db || !appId) return;
 
-    const unsubMembers = onSnapshot(collection(db, 'members'), (snap) => {
-      setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
-    const unsubLogs = onSnapshot(collection(db, 'logs'), (snap) => {
-      setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => new Date(b.date) - new Date(a.date)));
-    });
-    const unsubAlcohol = onSnapshot(collection(db, 'alcohol'), (snap) => {
-      setAlcohols(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
-    const unsubSongs = onSnapshot(collection(db, 'songs'), (snap) => {
-      setSongs(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
+    const unsubMembers = onSnapshot(collection(db, 'members'), (snap) => setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const unsubLogs = onSnapshot(collection(db, 'logs'), (snap) => setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => new Date(b.date) - new Date(a.date))));
+    const unsubAlcohol = onSnapshot(collection(db, 'alcohol'), (snap) => setAlcohols(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const unsubSongs = onSnapshot(collection(db, 'songs'), (snap) => setSongs(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubGeneral = onSnapshot(doc(db, 'general', 'info'), (docSnap) => {
       if (docSnap.exists()) {
-        setGeneralData(docSnap.data());
+        const data = docSnap.data();
+        // 相容性處理：如果舊資料只有 nextPractice，轉為 practices 陣列
+        if (data.nextPractice && !data.practices) {
+            data.practices = [data.nextPractice];
+        }
+        setGeneralData(data);
       } else {
         setDoc(doc(db, 'general', 'info'), DEFAULT_GENERAL_DATA);
       }
@@ -211,8 +200,8 @@ const App = () => {
 
   const renderContent = () => {
     switch (activeTab) {
-      case 'dashboard': return <DashboardView members={members} generalData={generalData} alcoholCount={alcohols.length} db={db} appId={appId} role={role} />;
-      case 'logs': return <SessionLogManager sessions={logs} scheduledDates={generalData.currentMonthSessions || []} members={members} settings={generalData.settings} appId={appId} db={db} role={role} />;
+      case 'dashboard': return <DashboardView members={members} generalData={generalData} alcoholCount={alcohols.length} db={db} appId={appId} role={role} user={user} />;
+      case 'logs': return <SessionLogManager sessions={logs} practices={generalData.practices || []} members={members} settings={generalData.settings} appId={appId} db={db} role={role} />;
       case 'alcohol': return <AlcoholManager alcohols={alcohols} members={members} settings={generalData.settings} appId={appId} db={db} role={role} />;
       case 'tech': return <TechView songs={songs} appId={appId} db={db} />;
       default: return <DashboardView />;
@@ -300,20 +289,54 @@ const NavBtn = ({ id, icon: Icon, label, active, set }) => (
 );
 
 // --- 1. Dashboard ---
-const DashboardView = ({ members, generalData, alcoholCount, db, role, appId }) => {
+const DashboardView = ({ members, generalData, alcoholCount, db, role, appId, user }) => {
   const [editingPractice, setEditingPractice] = useState(false);
-  const [practiceForm, setPracticeForm] = useState(generalData.nextPractice || {});
+  // 使用陣列來管理多場練團
+  const [practices, setPractices] = useState(generalData.practices || []);
   const [expandedMember, setExpandedMember] = useState(null);
   const [editingMember, setEditingMember] = useState(null); 
   
-  const displayDate = new Date(generalData.nextPractice?.date);
+  // 找出最近的一次練團
   const now = new Date();
-  const diffDays = Math.ceil((displayDate - now) / (1000 * 60 * 60 * 24)); 
+  const sortedPractices = [...practices]
+    .map(p => ({...p, dateObj: new Date(p.date)}))
+    .sort((a,b) => a.dateObj - b.dateObj);
+  
+  // 未來的練團中最近的一個，如果沒有未來的，就顯示最後一個
+  const nextPractice = sortedPractices.find(p => p.dateObj >= now) || sortedPractices[sortedPractices.length - 1] || { date: new Date().toISOString(), title: '尚未安排', location: '-' };
+  
+  const diffDays = Math.ceil((new Date(nextPractice.date) - now) / (1000 * 60 * 60 * 24)); 
 
-  const handleUpdatePractice = async () => {
+  const handleUpdatePractices = async () => {
     if (!db) return;
-    await updateDoc(doc(db, 'general', 'info'), { nextPractice: practiceForm });
+    await updateDoc(doc(db, 'general', 'info'), { practices: practices });
     setEditingPractice(false);
+  };
+
+  // 處理點名 (Attendance Toggle)
+  const toggleAttendance = async (memberId, dateStr) => {
+    // 權限檢查：只有本人或管理員可以改
+    const member = members.find(m => m.id === memberId);
+    if (!member) return;
+    
+    // 簡單權限判斷：如果是管理員 OR 是本人(比對Email)
+    // 註：這裡假設 member 有 email 欄位且已填寫，或是先寬鬆一點方便體驗
+    const canEdit = role.admin || (user.email && member.email === user.email);
+    
+    if (!canEdit) {
+      alert("只能修改自己的出席狀態喔！");
+      return;
+    }
+
+    const currentAttendance = member.attendance || [];
+    let newAttendance;
+    if (currentAttendance.includes(dateStr)) {
+      newAttendance = currentAttendance.filter(d => d !== dateStr);
+    } else {
+      newAttendance = [...currentAttendance, dateStr];
+    }
+    
+    await updateDoc(doc(db, 'members', memberId), { attendance: newAttendance });
   };
 
   const handleSaveMember = async (memberData) => {
@@ -333,49 +356,61 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, appId }) 
   };
 
   const addToCalendarUrl = () => {
-    const start = new Date(generalData.nextPractice.date).toISOString().replace(/-|:|\.\d\d\d/g, "");
-    const end = new Date(new Date(generalData.nextPractice.date).getTime() + 2*3600000).toISOString().replace(/-|:|\.\d\d\d/g, ""); 
-    return `https://www.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(generalData.nextPractice.title)}&dates=${start}/${end}&location=${encodeURIComponent(generalData.nextPractice.location)}`;
+    const start = new Date(nextPractice.date).toISOString().replace(/-|:|\.\d\d\d/g, "");
+    const end = new Date(new Date(nextPractice.date).getTime() + 2*3600000).toISOString().replace(/-|:|\.\d\d\d/g, ""); 
+    return `https://www.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(nextPractice.title)}&dates=${start}/${end}&location=${encodeURIComponent(nextPractice.location)}`;
   };
+
+  // 練團時間編輯 Modal 的內容
+  const renderPracticeEditor = () => (
+    <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
+      <div className="bg-white p-6 rounded-3xl w-full max-w-sm space-y-4 max-h-[80vh] overflow-y-auto">
+        <h3 className="font-bold text-lg text-[#725E77]">設定本月練團時間</h3>
+        {practices.map((p, idx) => (
+          <div key={idx} className="bg-[#FDFBF7] p-3 rounded-xl border border-[#E0E0D9] space-y-2 relative">
+             <button onClick={() => setPractices(practices.filter((_, i) => i !== idx))} className="absolute top-2 right-2 text-[#BC8F8F]"><MinusCircle size={16}/></button>
+             <input type="datetime-local" className="w-full bg-white p-2 rounded-lg text-sm" value={p.date} onChange={e => {
+               const newP = [...practices]; newP[idx].date = e.target.value; setPractices(newP);
+             }} />
+             <input type="text" className="w-full bg-white p-2 rounded-lg text-sm" placeholder="標題 (例: 2月第一練)" value={p.title} onChange={e => {
+               const newP = [...practices]; newP[idx].title = e.target.value; setPractices(newP);
+             }} />
+             <input type="text" className="w-full bg-white p-2 rounded-lg text-sm" placeholder="地點" value={p.location} onChange={e => {
+               const newP = [...practices]; newP[idx].location = e.target.value; setPractices(newP);
+             }} />
+          </div>
+        ))}
+        <button onClick={() => setPractices([...practices, { date: new Date().toISOString(), title: '新練團', location: '未定' }])} className="w-full py-2 border-2 border-dashed border-[#77ABC0] text-[#77ABC0] rounded-xl font-bold flex justify-center items-center gap-1">
+          <Plus size={16}/> 增加場次
+        </button>
+        <div className="flex gap-2 pt-2">
+          <button onClick={() => setEditingPractice(false)} className="flex-1 p-3 rounded-xl text-slate-400 font-bold">取消</button>
+          <button onClick={handleUpdatePractices} className="flex-1 p-3 rounded-xl bg-[#77ABC0] text-white font-bold shadow-lg">儲存設定</button>
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <div className="space-y-5 animate-in fade-in slide-in-from-bottom-4">
-      {/* 編輯練團時間 Modal (僅管理員) */}
-      {editingPractice && (
-        <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
-          <div className="bg-white p-6 rounded-3xl w-full max-w-sm space-y-4">
-            <h3 className="font-bold text-lg">設定下次練團</h3>
-            <input type="datetime-local" className="w-full bg-slate-100 p-3 rounded-xl" value={practiceForm.date} onChange={e => setPracticeForm({...practiceForm, date: e.target.value})} />
-            <input type="text" className="w-full bg-slate-100 p-3 rounded-xl" placeholder="標題" value={practiceForm.title} onChange={e => setPracticeForm({...practiceForm, title: e.target.value})} />
-            <input type="text" className="w-full bg-slate-100 p-3 rounded-xl" placeholder="地點" value={practiceForm.location} onChange={e => setPracticeForm({...practiceForm, location: e.target.value})} />
-            <div className="flex gap-2">
-              <button onClick={() => setEditingPractice(false)} className="flex-1 p-3 rounded-xl text-slate-500">取消</button>
-              <button onClick={handleUpdatePractice} className="flex-1 p-3 rounded-xl bg-[#77ABC0] text-white font-bold">儲存</button>
-            </div>
-          </div>
-        </div>
-      )}
+      {editingPractice && renderPracticeEditor()}
+      {editingMember && <MemberEditModal member={editingMember} onClose={() => setEditingMember(null)} onSave={handleSaveMember} />}
 
-      {/* 編輯團員 Modal */}
-      {editingMember && (
-        <MemberEditModal member={editingMember} onClose={() => setEditingMember(null)} onSave={handleSaveMember} />
-      )}
-
-      {/* 倒數卡片 */}
+      {/* 倒數卡片 (顯示最近的一場) */}
       <div className="bg-gradient-to-br from-[#77ABC0] to-[#6E7F9B] rounded-[32px] p-6 text-white shadow-lg shadow-[#77ABC0]/20 relative overflow-hidden group">
         <div className="relative z-10">
           <div className="flex justify-between items-start mb-1">
-            <h2 className="text-sm font-bold text-[#E0E7EA] uppercase tracking-widest">{generalData.nextPractice.title}</h2>
+            <h2 className="text-sm font-bold text-[#E0E7EA] uppercase tracking-widest">{nextPractice.title}</h2>
             <div className="flex gap-2">
-              {role.admin && <button onClick={() => { setPracticeForm(generalData.nextPractice); setEditingPractice(true); }} className="bg-white/20 p-2 rounded-full backdrop-blur-sm hover:bg-white/40"><Pencil size={18}/></button>}
+              {role.admin && <button onClick={() => { setPractices(generalData.practices || []); setEditingPractice(true); }} className="bg-white/20 p-2 rounded-full backdrop-blur-sm hover:bg-white/40"><Pencil size={18}/></button>}
               <a href={addToCalendarUrl()} target="_blank" className="bg-white/20 hover:bg-white/30 p-2 rounded-full backdrop-blur-sm transition active:scale-95"><CalendarPlus size={18} className="text-white"/></a>
             </div>
           </div>
           <div className="text-3xl font-bold mb-1 font-mono tracking-tight">
              {diffDays > 0 ? `倒數 ${diffDays} 天` : diffDays === 0 ? "就是今天！" : "已結束"}
           </div>
-          <div className="text-sm text-[#E0E7EA] font-medium mb-4">{displayDate.toLocaleDateString()} {displayDate.getHours()}:00</div>
-          <div className="flex items-center gap-2 bg-black/10 w-fit px-3 py-1.5 rounded-full backdrop-blur-sm border border-white/10"><MapPin size={14} className="text-[#E0E7EA]"/><span className="text-xs font-bold">{generalData.nextPractice.location}</span></div>
+          <div className="text-sm text-[#E0E7EA] font-medium mb-4">{new Date(nextPractice.date).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute:'2-digit' })}</div>
+          <div className="flex items-center gap-2 bg-black/10 w-fit px-3 py-1.5 rounded-full backdrop-blur-sm border border-white/10"><MapPin size={14} className="text-[#E0E7EA]"/><span className="text-xs font-bold">{nextPractice.location}</span></div>
         </div>
         <PartyPopper className="absolute -right-4 -bottom-4 text-white opacity-10 rotate-12" size={140} />
       </div>
@@ -388,17 +423,14 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, appId }) 
         </div>
         <div className="bg-[#E8F1E9] p-4 rounded-2xl border border-[#A8D8E2]/50 flex items-center gap-3 shadow-sm">
           <div className="bg-white p-2.5 rounded-full shadow-sm"><Check size={20} className="text-[#77ABC0]"/></div>
-          <div><div className="text-[10px] font-bold text-[#6E7F9B] uppercase tracking-wide">下次出席</div><div className="text-xl font-black text-[#725E77]">
-             {/* 簡單計算有在下次練團日期出席的人數 */}
-             {members.filter(m => m.attendance?.includes(generalData.nextPractice.date.split('T')[0])).length}/{members.length}
-          </div></div>
+          <div><div className="text-[10px] font-bold text-[#6E7F9B] uppercase tracking-wide">本月練團</div><div className="text-xl font-black text-[#725E77]">{practices.length} 場</div></div>
         </div>
       </div>
 
       {/* 點名表 */}
       <div>
         <div className="flex items-center justify-between px-1 mb-2">
-          <h3 className="font-bold text-xl text-[#725E77]">本月點名簿</h3>
+          <h3 className="font-bold text-xl text-[#725E77]">本月練團點名</h3>
           {role.admin && <button onClick={() => setEditingMember({})} className="text-xs font-bold text-[#77ABC0] bg-[#F0F4F5] px-3 py-1.5 rounded-lg flex items-center gap-1"><Plus size={14}/> 新增團員</button>}
         </div>
         <div className="grid grid-cols-1 gap-3">
@@ -416,12 +448,23 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, appId }) 
                     <div className="flex items-center gap-1 text-xs text-[#C5B8BF] font-medium"><span className="text-[#77ABC0] font-bold">{m.instrument}</span><span>•</span><span>{m.realName}</span></div>
                   </div>
                 </div>
-                <div className="flex gap-1.5 overflow-x-auto max-w-[100px]">
-                  {(generalData.currentMonthSessions || []).map(date => (
-                    <div key={date} className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold border shrink-0 ${m.attendance?.includes(date) ? 'bg-[#E8F1E9] text-[#5F7A61] border-[#CFE3D1]' : 'bg-[#F7F2F2] text-[#A69898] border-[#E8E0E0]'}`}>
-                      {date.slice(5)} {m.attendance?.includes(date) ? <CheckCircle2 size={10}/> : <XCircle size={10}/>}
-                    </div>
-                  ))}
+                {/* 互動式日期出席按鈕 */}
+                <div className="flex gap-1.5 overflow-x-auto max-w-[120px] scrollbar-hide">
+                  {practices.map(p => {
+                    const dateStr = p.date.split('T')[0]; // 用 YYYY-MM-DD 比對
+                    const isAttending = m.attendance?.includes(dateStr);
+                    return (
+                      <button 
+                        key={p.id}
+                        onClick={(e) => { e.stopPropagation(); toggleAttendance(m.id, dateStr); }}
+                        className={`flex flex-col items-center justify-center w-9 h-9 rounded-xl border transition active:scale-90 ${isAttending ? 'bg-[#E8F1E9] border-[#CFE3D1] text-[#5F7A61]' : 'bg-[#F7F2F2] border-[#E8E0E0] text-[#A69898]'}`}
+                        title={p.title}
+                      >
+                        <span className="text-[9px] font-bold leading-none">{new Date(p.date).getDate()}</span>
+                        {isAttending ? <CheckCircle2 size={10}/> : <XCircle size={10}/>}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
               {expandedMember === m.id && (
@@ -449,7 +492,7 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, appId }) 
   );
 };
 
-// --- Member Edit Modal (新增 Email 欄位) ---
+// --- Member Edit Modal ---
 const MemberEditModal = ({ member, onClose, onSave }) => {
   const [form, setForm] = useState(member || {});
   return (
@@ -458,7 +501,7 @@ const MemberEditModal = ({ member, onClose, onSave }) => {
         <h3 className="font-bold text-lg text-[#725E77]">{member.id ? '編輯團員' : '新增團員'}</h3>
         <div className="grid grid-cols-2 gap-2">
            <input className="bg-[#FDFBF7] p-3 rounded-xl text-sm" placeholder="暱稱" value={form.nickname || ''} onChange={e => setForm({...form, nickname: e.target.value})} />
-           <input className="bg-[#FDFBF7] p-3 rounded-xl text-sm" placeholder="本名 (對應用)" value={form.realName || ''} onChange={e => setForm({...form, realName: e.target.value})} />
+           <input className="bg-[#FDFBF7] p-3 rounded-xl text-sm" placeholder="本名" value={form.realName || ''} onChange={e => setForm({...form, realName: e.target.value})} />
         </div>
         <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm border border-[#77ABC0]/30" placeholder="Google Email (權限綁定用)" value={form.email || ''} onChange={e => setForm({...form, email: e.target.value})} />
         <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm" placeholder="樂器 (Vocal, Bass...)" value={form.instrument || ''} onChange={e => setForm({...form, instrument: e.target.value})} />
@@ -475,13 +518,31 @@ const MemberEditModal = ({ member, onClose, onSave }) => {
 
 // --- 2. 日誌管理器 ---
 const SessionLogManager = ({ sessions, scheduledDates, members, settings, db, role }) => {
+  // 注意：scheduledDates 這裡現在應該傳入 practices 陣列
   const [activeSessionId, setActiveSessionId] = useState(null);
-  const existingDates = sessions.map(s => s.date);
-  const pendingDates = scheduledDates.filter(d => !existingDates.includes(d)).sort();
+  
+  // 取得所有已設定的練團日期 (從 practices)
+  const practices = scheduledDates || []; // 這裡 scheduledDates 其實是傳入的 generalData.practices
+  const existingSessionDates = sessions.map(s => s.date);
 
-  const handleCreate = async (date) => {
+  // 找出「有排程」但「還沒建立日誌」的日期
+  const pendingPractices = practices.filter(p => {
+      const pDate = p.date.split('T')[0]; // 取日期部分
+      // 檢查是否已存在對應日期的日誌
+      return !sessions.some(s => s.date.startsWith(pDate));
+  }).sort((a,b) => new Date(a.date) - new Date(b.date));
+
+  const handleCreate = async (practiceInfo) => {
     if (!db) return;
-    const newSession = { date: date, location: '未定地點', funNotes: '', tracks: [], miscExpenses: [], createdAt: serverTimestamp() };
+    const dateStr = practiceInfo.date.split('T')[0]; // 使用 YYYY-MM-DD
+    const newSession = { 
+        date: dateStr, 
+        location: practiceInfo.location, 
+        funNotes: '', 
+        tracks: [], 
+        miscExpenses: [], 
+        createdAt: serverTimestamp() 
+    };
     try {
       const docRef = await addDoc(collection(db, 'logs'), newSession);
       setActiveSessionId(docRef.id);
@@ -497,15 +558,21 @@ const SessionLogManager = ({ sessions, scheduledDates, members, settings, db, ro
   return (
     <div className="space-y-4 animate-in slide-in-from-right-8">
       <div className="flex justify-between items-end px-1"><h2 className="text-2xl font-bold text-[#725E77]">練團日誌</h2></div>
-      {role.admin && pendingDates.map(date => (
-        <button key={date} onClick={() => handleCreate(date)} className="w-full p-4 rounded-[28px] border-2 border-dashed border-[#CBABCA] bg-[#FDFBF7] flex items-center justify-between text-[#CBABCA] hover:bg-[#FFF5F7] transition group">
+      
+      {/* 待補日誌：根據首頁設定的練團時間自動生成 */}
+      {role.admin && pendingPractices.map(p => (
+        <button key={p.id} onClick={() => handleCreate(p)} className="w-full p-4 rounded-[28px] border-2 border-dashed border-[#CBABCA] bg-[#FDFBF7] flex items-center justify-between text-[#CBABCA] hover:bg-[#FFF5F7] transition group">
           <div className="flex items-center gap-3">
             <div className="bg-[#F2D7DD]/30 p-2 rounded-full group-hover:scale-110 transition text-[#CBABCA]"><Plus size={20}/></div>
-            <div className="text-left"><div className="font-bold text-lg text-[#CBABCA]">{date.slice(5).replace('-','/')} 待補日誌</div><div className="text-xs opacity-70 text-[#C5B8BF]">點擊建立當日紀錄</div></div>
+            <div className="text-left">
+                <div className="font-bold text-lg text-[#CBABCA]">{new Date(p.date).toLocaleDateString()} 待補</div>
+                <div className="text-xs opacity-70 text-[#C5B8BF]">{p.title}</div>
+            </div>
           </div>
           <ChevronDown className="-rotate-90 opacity-50 text-[#C5B8BF]" />
         </button>
       ))}
+
       {sessions.map(s => (
         <div key={s.id} onClick={() => setActiveSessionId(s.id)} className="bg-white p-5 rounded-[28px] shadow-sm border border-[#E0E0D9] cursor-pointer hover:border-[#77ABC0]/50 transition relative group">
           <div className="flex justify-between items-start mb-2">
@@ -565,7 +632,6 @@ const SessionDetail = ({ session, members, settings, onBack, db, role }) => {
   );
 };
 
-// --- TrackList (任何人可編輯內容，但可擴充刪除權限) ---
 const TrackList = ({ session, db }) => {
   const [expandedTrack, setExpandedTrack] = useState(null);
   const [newTrackName, setNewTrackName] = useState("");
@@ -591,7 +657,11 @@ const TrackList = ({ session, db }) => {
           </div>
           {expandedTrack === t.id && (
             <div className="p-4 bg-white border-t border-[#E0E0D9] space-y-3">
-              <div className="text-xs text-[#C5B8BF]">曲目內容編輯功能 (開發中...)</div>
+              {t.link && <a href={t.link} target="_blank" className="flex items-center gap-2 text-xs text-[#77ABC0] font-bold bg-[#A8D8E2]/20 p-2 rounded-lg"><Play size={14}/> {t.link}</a>}
+              <div className="space-y-2">
+                {t.comments.map((c, i) => <div key={i} className="text-xs bg-[#FDFBF7] p-2 rounded-lg text-[#6E7F9B]"><span className="font-bold text-[#725E77]">{c.user}:</span> {c.text}</div>)}
+                <input className="w-full bg-[#FDFBF7] text-xs p-2 rounded-lg outline-none text-[#725E77]" placeholder="輸入留言..." />
+              </div>
             </div>
           )}
         </div>
@@ -604,9 +674,11 @@ const TrackList = ({ session, db }) => {
   );
 };
 
-// --- 練團費計算機 (限制: Admin 或 財務) ---
+// --- 練團費計算機 ---
 const PracticeFeeCalculator = ({ session, members, settings, role }) => {
-  const [selectedIds, setSelectedIds] = useState(members.filter(m => m.attendance?.includes(session.date)).map(m => m.id));
+  // 自動勾選當天有點名的人
+  const defaultAttendees = members.filter(m => m.attendance?.includes(session.date)).map(m => m.id);
+  const [selectedIds, setSelectedIds] = useState(defaultAttendees.length > 0 ? defaultAttendees : members.map(m => m.id));
   const [hours, setHours] = useState(2);
   const [hasKB, setHasKB] = useState(true);
   const [bankAccount, setBankAccount] = useState(settings?.studioBankAccount || "");
@@ -627,7 +699,6 @@ const PracticeFeeCalculator = ({ session, members, settings, role }) => {
         <div className="text-3xl font-black text-[#77ABC0] mb-1">${total}</div>
         <div className="text-xs font-bold text-[#6E7F9B]">每人 <span className="text-lg text-[#725E77]">${perPerson}</span></div>
       </div>
-      {/* 權限控制：只有 Admin 或 財務大臣 能編輯 */}
       {role.finance ? (
         <div className="space-y-3">
           <div className="flex gap-2">
@@ -654,7 +725,77 @@ const PracticeFeeCalculator = ({ session, members, settings, role }) => {
   );
 };
 
-// --- 酒櫃管理 (限制: Admin 或 酒水總管) ---
+// --- 雜支分攤 ---
+const MiscFeeCalculator = ({ session, members, settings }) => {
+  const [items, setItems] = useState(session.miscExpenses || []); 
+  const [newItem, setNewItem] = useState({ item: '', amount: '', payerId: '', splitters: [] });
+  const [copied, setCopied] = useState(false);
+
+  const handleAdd = () => {
+    if(!newItem.item || !newItem.amount || !newItem.payerId) return;
+    setItems([...items, { ...newItem, id: Date.now() }]);
+    setNewItem({ item: '', amount: '', payerId: '', splitters: [] });
+  };
+
+  const copyText = () => {
+    let text = `🍱 ${session.date} 雜支明細\n----------------\n`;
+    items.forEach(i => {
+      const payer = members.find(m => m.id === i.payerId)?.nickname;
+      const splitters = i.splitters.map(id => members.find(m => m.id === id)?.nickname).join('、');
+      const per = Math.ceil(i.amount / i.splitters.length);
+      text += `🔹 ${i.item} ($${i.amount})\n   墊付: ${payer}\n   分攤: ${splitters}\n   👉 每人給 ${payer} $${per}\n\n`;
+    });
+    const success = secureCopy(text);
+    if(success) { setCopied(true); setTimeout(() => setCopied(false), 2000); }
+  };
+
+  return (
+    <div className="p-4 space-y-6">
+      {/* 新增區塊 */}
+      <div className="bg-[#FDFBF7] p-4 rounded-2xl border border-[#E0E0D9] space-y-3">
+        <div className="flex gap-2">
+          <input className="flex-1 bg-white p-2 rounded-xl text-xs outline-none text-[#725E77]" placeholder="項目 (例: 雞排)" value={newItem.item} onChange={e=>setNewItem({...newItem, item: e.target.value})} />
+          <input className="w-20 bg-white p-2 rounded-xl text-xs outline-none text-[#725E77]" type="number" placeholder="$" value={newItem.amount} onChange={e=>setNewItem({...newItem, amount: e.target.value})} />
+        </div>
+        <div className="flex items-center gap-2 overflow-x-auto pb-1">
+          <span className="text-[10px] font-bold text-[#C5B8BF] shrink-0">墊付:</span>
+          {members.map(m => (
+            <button key={m.id} onClick={()=>setNewItem({...newItem, payerId: m.id})} className={`px-2 py-1 rounded-lg text-[10px] font-bold border shrink-0 ${newItem.payerId === m.id ? 'bg-[#F1CEBA] text-white border-[#F1CEBA]' : 'bg-white text-[#C5B8BF] border-[#E0E0D9]'}`}>{m.nickname}</button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2 overflow-x-auto pb-1">
+          <span className="text-[10px] font-bold text-[#C5B8BF] shrink-0">分攤:</span>
+          {members.map(m => (
+            <button key={m.id} onClick={()=>{
+              const has = newItem.splitters.includes(m.id);
+              setNewItem({...newItem, splitters: has ? newItem.splitters.filter(x=>x!==m.id) : [...newItem.splitters, m.id]});
+            }} className={`px-2 py-1 rounded-lg text-[10px] font-bold border shrink-0 ${newItem.splitters.includes(m.id) ? 'bg-[#725E77] text-white border-[#725E77]' : 'bg-white text-[#C5B8BF] border-[#E0E0D9]'}`}>{m.nickname}</button>
+          ))}
+        </div>
+        <button onClick={handleAdd} className="w-full bg-[#725E77] text-white text-xs font-bold py-2 rounded-xl active:scale-95 transition">加入清單</button>
+      </div>
+
+      <div className="space-y-2">
+        {items.map((it, idx) => (
+          <div key={idx} className="bg-white border border-[#E0E0D9] p-3 rounded-xl flex justify-between items-center text-xs">
+            <div>
+              <div className="font-bold text-[#725E77]">{it.item} <span className="text-[#F1CEBA]">${it.amount}</span></div>
+              <div className="text-[#C5B8BF] text-[10px]">墊付: {members.find(m=>m.id===it.payerId)?.nickname}</div>
+            </div>
+            <div className="text-right">
+              <div className="font-bold text-[#F1CEBA]">每人 ${Math.ceil(it.amount/it.splitters.length)}</div>
+              <div className="text-[#C5B8BF] text-[10px]">{it.splitters.length} 人分</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <button onClick={copyText} className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition ${copied ? 'bg-[#8DA399] text-white' : 'bg-[#CBABCA] text-white'}`}>{copied ? <Check size={16}/> : <Copy size={16}/>} 複製雜支明細</button>
+    </div>
+  );
+};
+
+// --- 4. Alcohol Manager (補貨計算機) ---
 const AlcoholManager = ({ alcohols, members, settings, db, role }) => {
   const [tab, setTab] = useState('list'); 
   return (
