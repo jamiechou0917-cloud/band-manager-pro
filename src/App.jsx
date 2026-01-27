@@ -129,6 +129,8 @@ const App = () => {
   const [songs, setSongs] = useState([]);
   const [generalData, setGeneralData] = useState(DEFAULT_GENERAL_DATA);
   
+  const appId = USER_CONFIG.appId; 
+
   // Auth 監聽
   useEffect(() => {
     if (auth) {
@@ -148,12 +150,12 @@ const App = () => {
     }
   }, []);
 
-  // --- 權限計算邏輯 (核心) ---
+  // --- 權限計算邏輯 (核心修正：不依賴 members.length) ---
   useEffect(() => {
-    if (user && members.length > 0) {
+    if (user) {
       const userEmail = user.email;
       
-      // 1. 超級管理員
+      // 1. 超級管理員 (直接根據 Email 判斷，不需等待團員資料載入)
       const isAdmin = ADMIN_EMAILS.includes(userEmail);
       
       // 2. 財務大臣 (找名字是陳昱維的 Email)
@@ -170,15 +172,12 @@ const App = () => {
     }
   }, [user, members]);
 
-  // Firestore 資料監聽 (修正為簡單路徑)
+  // Firestore 資料監聽
   useEffect(() => {
-    if (!db || !user) return;
+    if (!db || !appId) return;
 
     const unsubMembers = onSnapshot(collection(db, 'members'), (snap) => {
       setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (error) => {
-      console.error("Error fetching members:", error);
-      if (error.code === 'permission-denied') alert("權限不足：請檢查 Firebase Console 的 Firestore Rules 是否設定正確。");
     });
     const unsubLogs = onSnapshot(collection(db, 'logs'), (snap) => {
       setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => new Date(b.date) - new Date(a.date)));
@@ -211,10 +210,10 @@ const App = () => {
 
   const renderContent = () => {
     switch (activeTab) {
-      case 'dashboard': return <DashboardView members={members} generalData={generalData} alcoholCount={alcohols.length} db={db} role={role} />;
-      case 'logs': return <SessionLogManager sessions={logs} scheduledDates={generalData.currentMonthSessions || []} members={members} settings={generalData.settings} db={db} role={role} />;
-      case 'alcohol': return <AlcoholManager alcohols={alcohols} members={members} settings={generalData.settings} db={db} role={role} />;
-      case 'tech': return <TechView songs={songs} db={db} />;
+      case 'dashboard': return <DashboardView members={members} generalData={generalData} alcoholCount={alcohols.length} db={db} appId={appId} role={role} />;
+      case 'logs': return <SessionLogManager sessions={logs} scheduledDates={generalData.currentMonthSessions || []} members={members} settings={generalData.settings} appId={appId} db={db} role={role} />;
+      case 'alcohol': return <AlcoholManager alcohols={alcohols} members={members} settings={generalData.settings} appId={appId} db={db} role={role} />;
+      case 'tech': return <TechView songs={songs} appId={appId} db={db} />;
       default: return <DashboardView />;
     }
   };
