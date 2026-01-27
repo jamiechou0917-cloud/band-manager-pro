@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signInWithCustomToken, signOut } from 'firebase/auth';
 import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, setDoc, serverTimestamp } from 'firebase/firestore';
@@ -10,7 +10,7 @@ import {
   MapPin, CalendarPlus, Cake, XCircle, CheckCircle2,
   Wallet, Receipt, Coffee, Gift, Zap, LayoutGrid, List,
   PartyPopper, Headphones, Speaker, Star, Image as ImageIcon, Disc,
-  Ghost, Pencil, Trash2, Lock, Save, MinusCircle
+  Ghost, Pencil, Trash2, Lock, Save, MinusCircle, FilePlus
 } from 'lucide-react';
 
 // --- 🔐 1. 超級管理員設定 (最高權限) ---
@@ -102,13 +102,13 @@ try {
   }
 } catch (e) { console.error("Firebase init error:", e); }
 
-// --- 預設資料 (v7.1 更新結構：改為 practices 陣列) ---
+// --- 預設資料 ---
 const DEFAULT_GENERAL_DATA = {
   settings: {
     studioRate: 350, kbRate: 200,     
     studioBankAccount: '(待設定)', miscBankAccount: '(待設定)' 
   },
-  // 改為陣列，支援多場次
+  // 這裡改為 practices 陣列結構
   practices: [
     { id: 'init-1', date: new Date().toISOString(), title: '本月第一次練團', location: '未定地點' }
   ]
@@ -120,6 +120,8 @@ const App = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [imgError, setImgError] = useState(false);
   const [showPrankModal, setShowPrankModal] = useState(false);
+  
+  // --- 權限狀態 ---
   const [role, setRole] = useState({ admin: false, finance: false, alcohol: false });
 
   // 真實資料狀態
@@ -167,16 +169,25 @@ const App = () => {
 
   // Firestore 資料監聽
   useEffect(() => {
-    if (!db || !appId) return;
+    if (!db || !user) return;
 
-    const unsubMembers = onSnapshot(collection(db, 'members'), (snap) => setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-    const unsubLogs = onSnapshot(collection(db, 'logs'), (snap) => setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => new Date(b.date) - new Date(a.date))));
-    const unsubAlcohol = onSnapshot(collection(db, 'alcohol'), (snap) => setAlcohols(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-    const unsubSongs = onSnapshot(collection(db, 'songs'), (snap) => setSongs(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const unsubMembers = onSnapshot(collection(db, 'members'), (snap) => {
+      setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (error) => {
+      if (error.code === 'permission-denied') console.error("Permission denied. Check Firestore Rules.");
+    });
+    const unsubLogs = onSnapshot(collection(db, 'logs'), (snap) => {
+      setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => new Date(b.date) - new Date(a.date)));
+    });
+    const unsubAlcohol = onSnapshot(collection(db, 'alcohol'), (snap) => {
+      setAlcohols(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+    const unsubSongs = onSnapshot(collection(db, 'songs'), (snap) => {
+      setSongs(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
     const unsubGeneral = onSnapshot(doc(db, 'general', 'info'), (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
-        // 相容性處理：如果舊資料只有 nextPractice，轉為 practices 陣列
         if (data.nextPractice && !data.practices) {
             data.practices = [data.nextPractice];
         }
@@ -200,10 +211,11 @@ const App = () => {
 
   const renderContent = () => {
     switch (activeTab) {
-      case 'dashboard': return <DashboardView members={members} generalData={generalData} alcoholCount={alcohols.length} db={db} appId={appId} role={role} user={user} />;
-      case 'logs': return <SessionLogManager sessions={logs} practices={generalData.practices || []} members={members} settings={generalData.settings} appId={appId} db={db} role={role} />;
-      case 'alcohol': return <AlcoholManager alcohols={alcohols} members={members} settings={generalData.settings} appId={appId} db={db} role={role} />;
-      case 'tech': return <TechView songs={songs} appId={appId} db={db} />;
+      case 'dashboard': return <DashboardView members={members} generalData={generalData} alcoholCount={alcohols.length} db={db} role={role} user={user} />;
+      // 修正: 這裡將 generalData.practices 傳入 scheduledDates，實現連動
+      case 'logs': return <SessionLogManager sessions={logs} scheduledDates={generalData.practices || []} members={members} settings={generalData.settings} db={db} role={role} />;
+      case 'alcohol': return <AlcoholManager alcohols={alcohols} members={members} settings={generalData.settings} db={db} role={role} />;
+      case 'tech': return <TechView songs={songs} db={db} />;
       default: return <DashboardView />;
     }
   };
@@ -289,22 +301,17 @@ const NavBtn = ({ id, icon: Icon, label, active, set }) => (
 );
 
 // --- 1. Dashboard ---
-const DashboardView = ({ members, generalData, alcoholCount, db, role, appId, user }) => {
+const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) => {
   const [editingPractice, setEditingPractice] = useState(false);
-  // 使用陣列來管理多場練團
   const [practices, setPractices] = useState(generalData.practices || []);
   const [expandedMember, setExpandedMember] = useState(null);
   const [editingMember, setEditingMember] = useState(null); 
   
-  // 找出最近的一次練團
   const now = new Date();
   const sortedPractices = [...practices]
     .map(p => ({...p, dateObj: new Date(p.date)}))
     .sort((a,b) => a.dateObj - b.dateObj);
-  
-  // 未來的練團中最近的一個，如果沒有未來的，就顯示最後一個
   const nextPractice = sortedPractices.find(p => p.dateObj >= now) || sortedPractices[sortedPractices.length - 1] || { date: new Date().toISOString(), title: '尚未安排', location: '-' };
-  
   const diffDays = Math.ceil((new Date(nextPractice.date) - now) / (1000 * 60 * 60 * 24)); 
 
   const handleUpdatePractices = async () => {
@@ -313,21 +320,11 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, appId, us
     setEditingPractice(false);
   };
 
-  // 處理點名 (Attendance Toggle)
   const toggleAttendance = async (memberId, dateStr) => {
-    // 權限檢查：只有本人或管理員可以改
     const member = members.find(m => m.id === memberId);
     if (!member) return;
-    
-    // 簡單權限判斷：如果是管理員 OR 是本人(比對Email)
-    // 註：這裡假設 member 有 email 欄位且已填寫，或是先寬鬆一點方便體驗
     const canEdit = role.admin || (user.email && member.email === user.email);
-    
-    if (!canEdit) {
-      alert("只能修改自己的出席狀態喔！");
-      return;
-    }
-
+    if (!canEdit) { alert("只能修改自己的出席狀態喔！"); return; }
     const currentAttendance = member.attendance || [];
     let newAttendance;
     if (currentAttendance.includes(dateStr)) {
@@ -335,7 +332,6 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, appId, us
     } else {
       newAttendance = [...currentAttendance, dateStr];
     }
-    
     await updateDoc(doc(db, 'members', memberId), { attendance: newAttendance });
   };
 
@@ -361,7 +357,6 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, appId, us
     return `https://www.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(nextPractice.title)}&dates=${start}/${end}&location=${encodeURIComponent(nextPractice.location)}`;
   };
 
-  // 練團時間編輯 Modal 的內容
   const renderPracticeEditor = () => (
     <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
       <div className="bg-white p-6 rounded-3xl w-full max-w-sm space-y-4 max-h-[80vh] overflow-y-auto">
@@ -396,7 +391,6 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, appId, us
       {editingPractice && renderPracticeEditor()}
       {editingMember && <MemberEditModal member={editingMember} onClose={() => setEditingMember(null)} onSave={handleSaveMember} />}
 
-      {/* 倒數卡片 (顯示最近的一場) */}
       <div className="bg-gradient-to-br from-[#77ABC0] to-[#6E7F9B] rounded-[32px] p-6 text-white shadow-lg shadow-[#77ABC0]/20 relative overflow-hidden group">
         <div className="relative z-10">
           <div className="flex justify-between items-start mb-1">
@@ -415,7 +409,6 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, appId, us
         <PartyPopper className="absolute -right-4 -bottom-4 text-white opacity-10 rotate-12" size={140} />
       </div>
       
-      {/* 資訊卡 */}
       <div className="grid grid-cols-2 gap-3">
         <div className="bg-[#F0EEE6] p-4 rounded-2xl border border-[#F2D7DD] flex items-center gap-3 shadow-sm">
           <div className="bg-white p-2.5 rounded-full shadow-sm"><Beer size={20} className="text-[#C5A659]"/></div>
@@ -448,10 +441,9 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, appId, us
                     <div className="flex items-center gap-1 text-xs text-[#C5B8BF] font-medium"><span className="text-[#77ABC0] font-bold">{m.instrument}</span><span>•</span><span>{m.realName}</span></div>
                   </div>
                 </div>
-                {/* 互動式日期出席按鈕 */}
                 <div className="flex gap-1.5 overflow-x-auto max-w-[120px] scrollbar-hide">
                   {practices.map(p => {
-                    const dateStr = p.date.split('T')[0]; // 用 YYYY-MM-DD 比對
+                    const dateStr = p.date.split('T')[0];
                     const isAttending = m.attendance?.includes(dateStr);
                     return (
                       <button 
@@ -518,26 +510,25 @@ const MemberEditModal = ({ member, onClose, onSave }) => {
 
 // --- 2. 日誌管理器 ---
 const SessionLogManager = ({ sessions, scheduledDates, members, settings, db, role }) => {
-  // 注意：scheduledDates 這裡現在應該傳入 practices 陣列
   const [activeSessionId, setActiveSessionId] = useState(null);
   
-  // 取得所有已設定的練團日期 (從 practices)
-  const practices = scheduledDates || []; // 這裡 scheduledDates 其實是傳入的 generalData.practices
+  // scheduledDates 現在是 practices 陣列，需要先提取日期
+  const practices = scheduledDates || []; 
   const existingSessionDates = sessions.map(s => s.date);
 
-  // 找出「有排程」但「還沒建立日誌」的日期
   const pendingPractices = practices.filter(p => {
-      const pDate = p.date.split('T')[0]; // 取日期部分
-      // 檢查是否已存在對應日期的日誌
+      const pDate = p.date.split('T')[0];
       return !sessions.some(s => s.date.startsWith(pDate));
   }).sort((a,b) => new Date(a.date) - new Date(b.date));
 
-  const handleCreate = async (practiceInfo) => {
+  const [showManualCreate, setShowManualCreate] = useState(false);
+  const [manualDate, setManualDate] = useState(new Date().toISOString().split('T')[0]);
+
+  const handleCreate = async (dateStr, location = '未定地點') => {
     if (!db) return;
-    const dateStr = practiceInfo.date.split('T')[0]; // 使用 YYYY-MM-DD
     const newSession = { 
         date: dateStr, 
-        location: practiceInfo.location, 
+        location: location, 
         funNotes: '', 
         tracks: [], 
         miscExpenses: [], 
@@ -546,6 +537,7 @@ const SessionLogManager = ({ sessions, scheduledDates, members, settings, db, ro
     try {
       const docRef = await addDoc(collection(db, 'logs'), newSession);
       setActiveSessionId(docRef.id);
+      setShowManualCreate(false);
     } catch(e) { alert("Error: " + e.message); }
   };
 
@@ -557,11 +549,21 @@ const SessionLogManager = ({ sessions, scheduledDates, members, settings, db, ro
 
   return (
     <div className="space-y-4 animate-in slide-in-from-right-8">
-      <div className="flex justify-between items-end px-1"><h2 className="text-2xl font-bold text-[#725E77]">練團日誌</h2></div>
+      <div className="flex justify-between items-end px-1">
+        <h2 className="text-2xl font-bold text-[#725E77]">練團日誌</h2>
+        {role.admin && (
+           <button 
+             onClick={() => setShowManualCreate(true)} 
+             className="text-xs font-bold text-[#77ABC0] bg-[#F0F4F5] px-3 py-1.5 rounded-lg flex items-center gap-1 hover:bg-[#E0E7EA]"
+           >
+             <FilePlus size={14}/> 自訂日誌
+           </button>
+        )}
+      </div>
       
       {/* 待補日誌：根據首頁設定的練團時間自動生成 */}
       {role.admin && pendingPractices.map(p => (
-        <button key={p.id} onClick={() => handleCreate(p)} className="w-full p-4 rounded-[28px] border-2 border-dashed border-[#CBABCA] bg-[#FDFBF7] flex items-center justify-between text-[#CBABCA] hover:bg-[#FFF5F7] transition group">
+        <button key={p.id} onClick={() => handleCreate(p.date.split('T')[0], p.location)} className="w-full p-4 rounded-[28px] border-2 border-dashed border-[#CBABCA] bg-[#FDFBF7] flex items-center justify-between text-[#CBABCA] hover:bg-[#FFF5F7] transition group">
           <div className="flex items-center gap-3">
             <div className="bg-[#F2D7DD]/30 p-2 rounded-full group-hover:scale-110 transition text-[#CBABCA]"><Plus size={20}/></div>
             <div className="text-left">
@@ -572,6 +574,21 @@ const SessionLogManager = ({ sessions, scheduledDates, members, settings, db, ro
           <ChevronDown className="-rotate-90 opacity-50 text-[#C5B8BF]" />
         </button>
       ))}
+
+      {/* 手動新增 Modal */}
+      {showManualCreate && (
+        <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4">
+           <div className="bg-white p-6 rounded-3xl w-full max-w-sm space-y-4">
+              <h3 className="font-bold text-lg text-[#725E77]">自訂新增日誌</h3>
+              <p className="text-xs text-[#C5B8BF]">若要補登過去或臨時加練的場次，請選擇日期。</p>
+              <input type="date" className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm" value={manualDate} onChange={e => setManualDate(e.target.value)} />
+              <div className="flex gap-2 pt-2">
+                <button onClick={() => setShowManualCreate(false)} className="flex-1 p-3 rounded-xl text-[#C5B8BF] font-bold">取消</button>
+                <button onClick={() => handleCreate(manualDate)} className="flex-1 p-3 rounded-xl bg-[#77ABC0] text-white font-bold shadow-lg">建立</button>
+              </div>
+           </div>
+        </div>
+      )}
 
       {sessions.map(s => (
         <div key={s.id} onClick={() => setActiveSessionId(s.id)} className="bg-white p-5 rounded-[28px] shadow-sm border border-[#E0E0D9] cursor-pointer hover:border-[#77ABC0]/50 transition relative group">
@@ -632,6 +649,7 @@ const SessionDetail = ({ session, members, settings, onBack, db, role }) => {
   );
 };
 
+// --- TrackList (任何人可編輯內容，但可擴充刪除權限) ---
 const TrackList = ({ session, db }) => {
   const [expandedTrack, setExpandedTrack] = useState(null);
   const [newTrackName, setNewTrackName] = useState("");
@@ -674,11 +692,9 @@ const TrackList = ({ session, db }) => {
   );
 };
 
-// --- 練團費計算機 ---
+// --- 練團費計算機 (限制: Admin 或 財務) ---
 const PracticeFeeCalculator = ({ session, members, settings, role }) => {
-  // 自動勾選當天有點名的人
-  const defaultAttendees = members.filter(m => m.attendance?.includes(session.date)).map(m => m.id);
-  const [selectedIds, setSelectedIds] = useState(defaultAttendees.length > 0 ? defaultAttendees : members.map(m => m.id));
+  const [selectedIds, setSelectedIds] = useState(members.filter(m => m.attendance?.includes(session.date)).map(m => m.id));
   const [hours, setHours] = useState(2);
   const [hasKB, setHasKB] = useState(true);
   const [bankAccount, setBankAccount] = useState(settings?.studioBankAccount || "");
@@ -699,6 +715,7 @@ const PracticeFeeCalculator = ({ session, members, settings, role }) => {
         <div className="text-3xl font-black text-[#77ABC0] mb-1">${total}</div>
         <div className="text-xs font-bold text-[#6E7F9B]">每人 <span className="text-lg text-[#725E77]">${perPerson}</span></div>
       </div>
+      {/* 權限控制：只有 Admin 或 財務大臣 能編輯 */}
       {role.finance ? (
         <div className="space-y-3">
           <div className="flex gap-2">
@@ -796,8 +813,8 @@ const MiscFeeCalculator = ({ session, members, settings }) => {
 };
 
 // --- 4. Alcohol Manager (補貨計算機) ---
-const AlcoholManager = ({ alcohols, members, settings, db, role }) => {
-  const [tab, setTab] = useState('list'); 
+const AlcoholManager = ({ alcohols, members, settings, db, appId, role }) => {
+  const [tab, setTab] = useState('list'); // list, calculator
   return (
     <div className="space-y-4 animate-in slide-in-from-right-8">
       <div className="flex bg-[#E0E0D9] p-1 rounded-xl mb-2">
@@ -870,7 +887,7 @@ const AlcoholFeeCalculator = ({ members, settings }) => {
 };
 
 // --- 5. Tech View ---
-const TechView = ({ songs, db }) => {
+const TechView = ({ songs, db, appId }) => {
   const [viewMode, setViewMode] = useState('list'); // list, grid
   const [filter, setFilter] = useState('all'); // all, cover, tech, gear
 
