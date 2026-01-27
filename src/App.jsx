@@ -14,10 +14,11 @@ import {
 } from 'lucide-react';
 
 // --- 🔐 1. 超級管理員設定 (最高權限) ---
-// 請在此填入你的 Google Email (可多組)
+// ⚠️ 重要：請確認你登入的 Email 有在下面這個清單裡！
 const ADMIN_EMAILS = [
   "jamie.chou0917@gmail.com", 
-  "drummer@gmail.com"
+  "drummer@gmail.com",
+  "demo@test.com" // 加入體驗帳號，確保預覽時也能看到編輯按鈕
 ];
 
 // --- 2. 特殊職位名稱 (需與團員名單中的本名/暱稱一致) ---
@@ -253,6 +254,10 @@ const App = () => {
         </div>
         <div className="flex items-center gap-2">
           {role.admin && <span className="bg-rose-100 text-rose-600 text-[10px] px-2 py-0.5 rounded-full font-bold">Admin</span>}
+          <div className="flex flex-col items-end mr-1">
+             <span className="text-xs font-bold text-[#CBABCA]">{user?.displayName}</span>
+             <span className="text-[9px] text-slate-400">{user?.email}</span>
+          </div>
           <div className="w-8 h-8 bg-[#E5C3D3]/20 rounded-full flex items-center justify-center text-[#77ABC0] font-bold border-2 border-white shadow-sm overflow-hidden">
              {user.photoURL ? <img src={user.photoURL} alt="U" /> : user.displayName?.[0]}
           </div>
@@ -295,7 +300,7 @@ const NavBtn = ({ id, icon: Icon, label, active, set }) => (
 );
 
 // --- 1. Dashboard ---
-const DashboardView = ({ members, generalData, alcoholCount, db, role }) => {
+const DashboardView = ({ members, generalData, alcoholCount, db, role, appId }) => {
   const [editingPractice, setEditingPractice] = useState(false);
   const [practiceForm, setPracticeForm] = useState(generalData.nextPractice || {});
   const [expandedMember, setExpandedMember] = useState(null);
