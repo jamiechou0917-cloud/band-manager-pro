@@ -76,11 +76,9 @@ const exportToCSV = (data, filename) => {
     alert("沒有資料可匯出");
     return;
   }
-  // 處理資料欄位，確保沒有 undefined
   const processedData = data.map(row => {
     const newRow = {};
     Object.keys(row).forEach(key => {
-       // 排除複雜物件，只留字串與數字
        if (typeof row[key] !== 'object' || row[key] === null) {
          newRow[key] = row[key];
        } else if (key === 'tracks') {
@@ -93,7 +91,7 @@ const exportToCSV = (data, filename) => {
   const separator = ',';
   const keys = Object.keys(processedData[0]);
   const csvContent =
-    '\uFEFF' + // 加入 BOM 解決 Excel 中文亂碼
+    '\uFEFF' + 
     keys.join(separator) +
     '\n' +
     processedData.map(row => {
@@ -122,7 +120,7 @@ const exportToCSV = (data, filename) => {
 const formatBirthdayDisplay = (dateStr) => {
   if (!dateStr) return "未知";
   const parts = dateStr.split('-');
-  if (parts.length === 3) return `${parts[1]}/${parts[2]}`; // 只回傳 月/日
+  if (parts.length === 3) return `${parts[1]}/${parts[2]}`; 
   return dateStr;
 };
 
@@ -150,8 +148,12 @@ const getZodiac = (dateStr) => {
   return (z[idx]?.n || "") + "座";
 };
 
-// --- Firebase Config ---
-const USER_CONFIG = {
+// ==========================================
+// 🔥🔥🔥 Firebase 初始化 (正式環境模式) 🔥🔥🔥
+// ==========================================
+
+// 1. 您的真實設定
+const firebaseConfig = {
   apiKey: "AIzaSyDb36ftpgHzZEH2IuYOsPmJEiKgeVhLWKk",
   authDomain: "bandmanager-a3049.firebaseapp.com",
   projectId: "bandmanager-a3049",
@@ -159,33 +161,14 @@ const USER_CONFIG = {
   messagingSenderId: "193559225053",
   appId: "1:193559225053:web:124fd5a7ab3cf1a854f134"
 };
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : USER_CONFIG;
-const IS_CANVAS = typeof __firebase_config !== 'undefined';
-const storageAppId = IS_CANVAS ? (typeof __app_id !== 'undefined' ? __app_id : 'band-manager-preview') : null;
 
-// 使用函式動態取得參照，避免在 render 外直接使用 db
-const getCollectionRef = (db, name) => {
-  if (IS_CANVAS && storageAppId) {
-    return collection(db, 'artifacts', storageAppId, 'public', 'data', name);
-  }
-  return collection(db, name);
-};
-
-const getDocRef = (db, name, id) => {
-  if (IS_CANVAS && storageAppId) {
-    return doc(db, 'artifacts', storageAppId, 'public', 'data', name, id);
-  }
-  return doc(db, name, id);
-};
-
+// 2. 初始化 Firebase (不再使用預覽環境變數，強制使用真實設定)
 let auth, googleProvider, db;
 try {
-  if (firebaseConfig) {
-    const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
-    auth = getAuth(app);
-    db = getFirestore(app);
-    googleProvider = new GoogleAuthProvider();
-  }
+  const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+  auth = getAuth(app);
+  db = getFirestore(app);
+  googleProvider = new GoogleAuthProvider();
 } catch (e) { console.error("Firebase init error:", e); }
 
 // --- 預設資料 ---
@@ -212,8 +195,6 @@ const App = () => {
   const [alcohols, setAlcohols] = useState([]);
   const [songs, setSongs] = useState([]);
   const [generalData, setGeneralData] = useState(null);
-  
-  const appId = USER_CONFIG.appId; 
 
   // Auth 監聽
   useEffect(() => {
@@ -222,7 +203,7 @@ const App = () => {
       const unsubAuth = onAuthStateChanged(auth, async (u) => {
         if (u) {
           // --- 白名單檢查 ---
-          if (!IS_CANVAS && !MEMBER_EMAILS.includes(u.email)) {
+          if (!MEMBER_EMAILS.includes(u.email)) {
             alert(`⛔ 抱歉，您的 Email (${u.email}) 不在團員名單中，無法存取本系統。\n請聯繫團長加入名單。`);
             await signOut(auth);
             setUser(null); setLoading(false); return;
@@ -230,13 +211,8 @@ const App = () => {
           setUser(u); setLoading(false);
         } else {
           setUser(null); setLoading(false);
-          // 移除自動登入，僅保留預覽環境的方便性
-          if (IS_CANVAS) setTimeout(() => setUser({ uid: 'demo', displayName: '體驗帳號', photoURL: null, email: 'demo@test.com' }), 1000);
         }
       });
-      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-        signInWithCustomToken(auth, __initial_auth_token).catch(e => console.error(e));
-      }
       return () => unsubAuth();
     } else {
       setLoading(false);
@@ -248,37 +224,33 @@ const App = () => {
     if (user) {
       const userEmail = user.email;
       const isAdmin = ADMIN_EMAILS.includes(userEmail);
-      
       const financeMember = members.find(m => m.realName === ROLE_FINANCE_NAME || m.nickname === ROLE_FINANCE_NAME);
       const isFinance = isAdmin || (financeMember && financeMember.email === userEmail);
-      
       const alcoholMember = members.find(m => m.realName === ROLE_ALCOHOL_NAME || m.nickname === ROLE_ALCOHOL_NAME);
       const isAlcohol = isAdmin || (alcoholMember && alcoholMember.email === userEmail);
-
       setRole({ admin: isAdmin, finance: isFinance, alcohol: isAlcohol });
     } else {
       setRole({ admin: false, finance: false, alcohol: false });
     }
   }, [user, members]);
 
-  // Firestore 資料監聽
+  // Firestore 資料監聽 (直接使用根目錄)
   useEffect(() => {
     if (!db || !user) return;
 
-    const unsubMembers = onSnapshot(getCollectionRef(db, 'members'), (snap) => setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() }))), 
-      (err) => { if (err.code === 'permission-denied') console.warn("Permission denied. Check Firestore Rules."); });
-    
-    const unsubLogs = onSnapshot(getCollectionRef(db, 'logs'), (snap) => setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => new Date(b.date) - new Date(a.date))));
-    const unsubAlcohol = onSnapshot(getCollectionRef(db, 'alcohol'), (snap) => setAlcohols(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-    const unsubSongs = onSnapshot(getCollectionRef(db, 'songs'), (snap) => setSongs(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-    
-    const unsubGeneral = onSnapshot(getDocRef(db, 'general', 'info'), (docSnap) => {
+    // 這裡使用標準路徑，不再加上 artifacts 前綴
+    const unsubMembers = onSnapshot(collection(db, 'members'), (snap) => setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() }))), (e) => console.warn(e));
+    const unsubLogs = onSnapshot(collection(db, 'logs'), (snap) => setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => new Date(b.date) - new Date(a.date))));
+    const unsubAlcohol = onSnapshot(collection(db, 'alcohol'), (snap) => setAlcohols(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const unsubSongs = onSnapshot(collection(db, 'songs'), (snap) => setSongs(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const unsubGeneral = onSnapshot(doc(db, 'general', 'info'), (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
         if (data.nextPractice && !data.practices) data.practices = [data.nextPractice]; 
         setGeneralData(data);
       } else {
-        setDoc(getDocRef(db, 'general', 'info'), DEFAULT_GENERAL_DATA);
+        setDoc(doc(db, 'general', 'info'), DEFAULT_GENERAL_DATA);
+        setGeneralData(DEFAULT_GENERAL_DATA);
       }
     });
 
@@ -411,11 +383,14 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
     .sort((a,b) => a.dateObj - b.dateObj);
   
   const nextPractice = sortedPractices.find(p => p.dateObj >= now) || sortedPractices[sortedPractices.length - 1] || { date: new Date().toISOString(), title: '尚未安排', location: '圓頭音樂' };
-  const diffDays = Math.ceil((new Date(nextPractice.date) - now) / (1000 * 60 * 60 * 24)); 
+  
+  const nextDateObj = new Date(nextPractice.date);
+  const isValidDate = !isNaN(nextDateObj.getTime());
+  const diffDays = isValidDate ? Math.ceil((nextDateObj - now) / (1000 * 60 * 60 * 24)) : 0; 
 
   const handleUpdatePractices = async () => {
     if (!db) return;
-    await updateDoc(getDocRef(db, 'general', 'info'), { practices: practices });
+    await updateDoc(doc(db, 'general', 'info'), { practices: practices });
     setEditingPractice(false);
   };
 
@@ -431,28 +406,29 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
     } else {
       newAttendance = [...currentAttendance, dateStr];
     }
-    await updateDoc(getDocRef(db, 'members', memberId), { attendance: newAttendance });
+    await updateDoc(doc(db, 'members', memberId), { attendance: newAttendance });
   };
 
   const handleSaveMember = async (memberData) => {
     if (!db) return;
     if (memberData.id) {
-      await updateDoc(getDocRef(db, 'members', memberData.id), memberData);
+      await updateDoc(doc(db, 'members', memberData.id), memberData);
     } else {
-      await addDoc(getCollectionRef(db, 'members'), memberData);
+      await addDoc(collection(db, 'members'), memberData);
     }
     setEditingMember(null);
   };
 
   const handleDeleteMember = async (id) => {
     if (confirm("確定要刪除這位團員嗎？")) {
-       await deleteDoc(getDocRef(db, 'members', id));
+       await deleteDoc(doc(db, 'members', id));
     }
   };
 
   const addToCalendarUrl = () => {
-    const start = new Date(nextPractice.date).toISOString().replace(/-|:|\.\d\d\d/g, "");
-    const endTime = nextPractice.endTime ? new Date(nextPractice.endTime) : new Date(new Date(nextPractice.date).getTime() + 2*60*60*1000);
+    if (!isValidDate) return "#";
+    const start = nextDateObj.toISOString().replace(/-|:|\.\d\d\d/g, "");
+    const endTime = nextPractice.endTime ? new Date(nextPractice.endTime) : new Date(nextDateObj.getTime() + 2*60*60*1000);
     const end = endTime.toISOString().replace(/-|:|\.\d\d\d/g, ""); 
     return `https://www.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(nextPractice.title)}&dates=${start}/${end}&location=${encodeURIComponent(nextPractice.location)}`;
   };
@@ -500,19 +476,20 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
       <div className="bg-gradient-to-br from-[#77ABC0] to-[#6E7F9B] rounded-[32px] p-6 text-white shadow-lg shadow-[#77ABC0]/20 relative overflow-hidden group">
         <div className="relative z-10">
           <div className="flex justify-between items-start mb-1">
-            <h2 className="text-xl font-black text-[#E0E7EA] uppercase tracking-widest drop-shadow-md">{nextPractice.title}</h2>
+            <h2 className="text-xl font-black text-[#E0E7EA] uppercase tracking-widest drop-shadow-md">{isValidDate ? nextPractice.title : "無練團安排"}</h2>
             <div className="flex gap-2">
               {role.admin && <button onClick={() => { setPractices(generalData.practices || []); setEditingPractice(true); }} className="bg-white/20 p-2 rounded-full backdrop-blur-sm hover:bg-white/40"><Pencil size={18}/></button>}
               <a href={addToCalendarUrl()} target="_blank" className="bg-white/20 hover:bg-white/30 p-2 rounded-full backdrop-blur-sm transition active:scale-95"><CalendarPlus size={18} className="text-white"/></a>
             </div>
           </div>
           <div className="text-4xl font-black mb-1 font-mono tracking-tight drop-shadow-md">
-             {diffDays > 0 ? `倒數 ${diffDays} 天` : diffDays === 0 ? "就是今天！" : "已結束"}
+             {isValidDate ? (diffDays > 0 ? `倒數 ${diffDays} 天` : diffDays === 0 ? "就是今天！" : "已結束") : "--"}
           </div>
           <div className="text-lg text-[#E0E7EA] font-bold mb-4 flex items-center gap-2">
             <Clock size={18}/> 
-            {new Date(nextPractice.date).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute:'2-digit' })}
-            {nextPractice.endTime && ` - ${new Date(nextPractice.endTime).toLocaleTimeString('zh-TW', { hour: '2-digit', minute:'2-digit' })}`}
+            {isValidDate 
+              ? `${nextDateObj.toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute:'2-digit' })} ${nextPractice.endTime ? `- ${new Date(nextPractice.endTime).toLocaleTimeString('zh-TW', { hour: '2-digit', minute:'2-digit' })}` : ''}`
+              : "時間未定"}
           </div>
           <div className="flex items-center gap-2 bg-black/20 w-fit px-4 py-2 rounded-full backdrop-blur-sm border border-white/10"><MapPin size={16} className="text-[#E0E7EA]"/><span className="text-sm font-bold">{nextPractice.location}</span></div>
         </div>
@@ -647,7 +624,8 @@ const SessionLogManager = ({ sessions, scheduledDates, members, settings, db, ap
         createdAt: serverTimestamp() 
     };
     try {
-      const docRef = await addDoc(getCollectionRef(db, 'logs'), newSession);
+      // 修正為使用根目錄集合 'logs'
+      const docRef = await addDoc(collection(db, 'logs'), newSession);
       setActiveSessionId(docRef.id);
       setShowManualCreate(false);
     } catch(e) { alert("Error: " + e.message); }
@@ -726,12 +704,12 @@ const SessionDetail = ({ session, members, settings, onBack, db, role }) => {
 
   const handleUpdateNotes = async () => {
     if (!db) return;
-    await updateDoc(getDocRef(db, 'logs', session.id), { funNotes });
+    await updateDoc(doc(db, 'logs', session.id), { funNotes });
   };
 
   const handleUpdateLocation = async () => {
      if (!db) return;
-     await updateDoc(getDocRef(db, 'logs', session.id), { location });
+     await updateDoc(doc(db, 'logs', session.id), { location });
      setEditingLocation(false);
   };
 
@@ -793,7 +771,7 @@ const TrackList = ({ session, db }) => {
   const handleAddTrack = async () => {
     if (!newTrackName.trim() || !db) return;
     const newTrack = { id: Date.now(), title: newTrackName, status: 'new', link: '', comments: [] };
-    await updateDoc(getDocRef(db, 'logs', session.id), { tracks: [...tracks, newTrack] });
+    await updateDoc(doc(db, 'logs', session.id), { tracks: [...tracks, newTrack] });
     setNewTrackName("");
   };
 
@@ -808,7 +786,7 @@ const TrackList = ({ session, db }) => {
       }
       return t;
     });
-    await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks });
+    await updateDoc(doc(db, 'logs', session.id), { tracks: updatedTracks });
     setNewComment("");
   };
 
@@ -965,7 +943,7 @@ const MiscFeeCalculator = ({ session, members, settings }) => {
         ))}
       </div>
 
-      <button onClick={copyText} className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition ${copied ? 'bg-[#8DA399] text-white' : 'bg-[#CBABCA] text-white'}`}>{copied ? <Check size={16}/> : <Copy size={16}/>} 複製雜支明細</button>
+      <button onClick={copyText} className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition ${copied ? 'bg-[#8DA399] text-white' : 'bg-[#CBABCA] text-white'}`}>{copied ? <Check size={16}/> : <Copy size={16}/>} 複製請款文</button>
     </div>
   );
 };
@@ -978,7 +956,7 @@ const AlcoholManager = ({ alcohols, members, settings, db, appId, role }) => {
 
   const handleAdd = async () => {
     if (!newAlcohol.name) return;
-    await addDoc(getCollectionRef(db, 'alcohol'), newAlcohol);
+    await addDoc(collection(db, 'alcohol'), newAlcohol);
     setShowAdd(false);
     setNewAlcohol({ name: '', type: 'Whiskey', level: 100, rating: 5, note: '' });
   };
@@ -1083,7 +1061,7 @@ const TechView = ({ songs, db, role, user }) => {
 
   const handleAdd = async () => {
     if (!newSong.title || !db) return;
-    await addDoc(getCollectionRef(db, 'songs'), { ...newSong, user: user.displayName });
+    await addDoc(collection(db, 'songs'), { ...newSong, user: user.displayName });
     setShowAdd(false);
     setNewSong({ title: '', artist: '', link: '', type: 'cover' });
   };
@@ -1172,7 +1150,7 @@ const AdminDashboard = ({ members, logs, db }) => {
 
   const handleDelete = async (collectionName, id) => {
     if (confirm("⚠️ 警告：這將永久刪除此筆資料！確定嗎？")) {
-      await deleteDoc(getDocRef(db, collectionName, id));
+      await deleteDoc(doc(db, collectionName, id));
     }
   };
 
