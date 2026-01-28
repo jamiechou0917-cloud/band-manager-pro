@@ -21,14 +21,16 @@ import {
 // 1. 團員白名單 (只有這些 Email 可以登入使用)
 const MEMBER_EMAILS = [
   "jamie.chou0917@gmail.com", 
-  "a0916725611@gmail.com",
-  "Jesschen39@gmail.com",
-  "keyboard@gmail.com",
+  "drummer@gmail.com",
+  "demo@test.com",
+  "bass@gmail.com",
+  "keyboard@gmail.com"
 ];
 
 // 2. 超級管理員 (擁有後台、編輯全團資料權限)
 const ADMIN_EMAILS = [
   "jamie.chou0917@gmail.com",
+  "demo@test.com"
 ];
 
 // 3. 特殊職位名稱 (需與團員名單中的本名/暱稱一致)
@@ -158,11 +160,23 @@ const USER_CONFIG = {
   appId: "1:193559225053:web:124fd5a7ab3cf1a854f134"
 };
 const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : USER_CONFIG;
-// 判斷是否為預覽環境
 const IS_CANVAS = typeof __firebase_config !== 'undefined';
-// 預覽環境用 artifacts 路徑，正式環境用根目錄
-const getCollectionRef = (db, name) => IS_CANVAS ? collection(db, 'artifacts', 'band-manager-preview', 'public', 'data', name) : collection(db, name);
-const getDocRef = (db, name, id) => IS_CANVAS ? doc(db, 'artifacts', 'band-manager-preview', 'public', 'data', name, id) : doc(db, name, id);
+const storageAppId = IS_CANVAS ? (typeof __app_id !== 'undefined' ? __app_id : 'band-manager-preview') : null;
+
+// 使用函式動態取得參照，避免在 render 外直接使用 db
+const getCollectionRef = (db, name) => {
+  if (IS_CANVAS && storageAppId) {
+    return collection(db, 'artifacts', storageAppId, 'public', 'data', name);
+  }
+  return collection(db, name);
+};
+
+const getDocRef = (db, name, id) => {
+  if (IS_CANVAS && storageAppId) {
+    return doc(db, 'artifacts', storageAppId, 'public', 'data', name, id);
+  }
+  return doc(db, name, id);
+};
 
 let auth, googleProvider, db;
 try {
@@ -207,7 +221,7 @@ const App = () => {
       getRedirectResult(auth).catch(e => console.log(e));
       const unsubAuth = onAuthStateChanged(auth, async (u) => {
         if (u) {
-          // --- 白名單檢查 (重要) ---
+          // --- 白名單檢查 ---
           if (!IS_CANVAS && !MEMBER_EMAILS.includes(u.email)) {
             alert(`⛔ 抱歉，您的 Email (${u.email}) 不在團員名單中，無法存取本系統。\n請聯繫團長加入名單。`);
             await signOut(auth);
@@ -301,7 +315,6 @@ const App = () => {
 
   const logoSrc = BAND_LOGO_BASE64 || BAND_LOGO_URL;
   const showImage = logoSrc && !imgError;
-  
   const handlePrankClick = (e) => {
     const btn = e.currentTarget;
     btn.style.transform = 'rotate(360deg) scale(1.2)';
@@ -384,136 +397,6 @@ const NavBtn = ({ id, icon: Icon, label, active, set }) => (
     <span className="text-[10px] font-bold">{label}</span>
   </button>
 );
-
-// --- 6. Admin Dashboard (後台管理) ---
-const AdminDashboard = ({ members, logs, db }) => {
-  const [tab, setTab] = useState('members');
-  const [filterStart, setFilterStart] = useState('');
-  const [filterEnd, setFilterEnd] = useState('');
-  const [searchTerm, setSearchTerm] = useState(''); // 新增搜尋狀態
-
-  const handleExport = () => {
-    const dataToExport = tab === 'members' ? members : logs;
-    const filteredData = dataToExport.filter(item => {
-       const inDateRange = tab === 'logs' && filterStart && filterEnd ? (item.date >= filterStart && item.date <= filterEnd) : true;
-       // 關鍵字搜尋邏輯
-       const matchesSearch = searchTerm ? Object.values(item).some(val => 
-         String(val).toLowerCase().includes(searchTerm.toLowerCase())
-       ) : true;
-       return inDateRange && matchesSearch;
-    });
-
-    const formattedData = filteredData.map(item => {
-      if (tab === 'members') {
-        return {
-          暱稱: item.nickname,
-          本名: item.realName,
-          樂器: item.instrument,
-          生日: item.birthday,
-          Email: item.email || '未設定',
-          備註: item.note
-        };
-      } else {
-        return {
-          日期: item.date,
-          地點: item.location,
-          曲目數: item.tracks?.length || 0,
-          備註: item.funNotes
-        };
-      }
-    });
-
-    exportToCSV(formattedData, `Band_${tab}_export_${new Date().toISOString().slice(0,10)}.csv`);
-  };
-
-  const handleDelete = async (collectionName, id) => {
-    if (confirm("⚠️ 警告：這將永久刪除此筆資料！確定嗎？")) {
-      await deleteDoc(getDocRef(db, collectionName, id));
-    }
-  };
-
-  // 篩選資料以供顯示
-  const displayData = (tab === 'members' ? members : logs).filter(item => {
-     const inDateRange = tab === 'logs' && filterStart && filterEnd ? (item.date >= filterStart && item.date <= filterEnd) : true;
-     const matchesSearch = searchTerm ? Object.values(item).some(val => 
-       String(val).toLowerCase().includes(searchTerm.toLowerCase())
-     ) : true;
-     return inDateRange && matchesSearch;
-  });
-
-  return (
-    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 pb-20">
-      <div className="bg-white p-5 rounded-[32px] border border-[#E0E0D9] shadow-sm">
-        <h2 className="text-xl font-black text-[#725E77] flex items-center gap-2 mb-4">
-          <Database size={24}/> 後台管理系統
-        </h2>
-        
-        <div className="flex gap-2 mb-4 overflow-x-auto pb-1">
-          <button onClick={() => setTab('members')} className={`px-4 py-2 rounded-xl text-xs font-bold transition ${tab === 'members' ? 'bg-[#77ABC0] text-white' : 'bg-[#F0F4F5] text-[#77ABC0]'}`}>成員名單</button>
-          <button onClick={() => setTab('logs')} className={`px-4 py-2 rounded-xl text-xs font-bold transition ${tab === 'logs' ? 'bg-[#77ABC0] text-white' : 'bg-[#F0F4F5] text-[#77ABC0]'}`}>練團紀錄</button>
-        </div>
-
-        {/* 搜尋框 */}
-        <div className="bg-[#FDFBF7] p-3 rounded-xl border border-[#E0E0D9] mb-4 space-y-2">
-            <div className="text-[10px] font-bold text-[#C5B8BF] uppercase flex items-center gap-1"><Search size={10}/> 關鍵字搜尋</div>
-            <input 
-              type="text" 
-              className="w-full p-2 rounded-lg text-xs bg-white border border-[#E0E0D9] outline-none focus:ring-1 ring-[#77ABC0]" 
-              placeholder={tab === 'members' ? "搜尋姓名、樂器..." : "搜尋地點、備註..."}
-              value={searchTerm} 
-              onChange={e=>setSearchTerm(e.target.value)} 
-            />
-        </div>
-
-        {tab === 'logs' && (
-          <div className="bg-[#FDFBF7] p-3 rounded-xl border border-[#E0E0D9] mb-4 space-y-2">
-            <div className="text-[10px] font-bold text-[#C5B8BF] uppercase flex items-center gap-1"><Filter size={10}/> 日期篩選</div>
-            <div className="flex gap-2">
-              <input type="date" className="w-full p-2 rounded-lg text-xs bg-white border border-[#E0E0D9]" value={filterStart} onChange={e=>setFilterStart(e.target.value)} />
-              <span className="text-[#C5B8BF] self-center">~</span>
-              <input type="date" className="w-full p-2 rounded-lg text-xs bg-white border border-[#E0E0D9]" value={filterEnd} onChange={e=>setFilterEnd(e.target.value)} />
-            </div>
-          </div>
-        )}
-
-        <button onClick={handleExport} className="w-full py-3 bg-[#E8F1E9] text-[#5F7A61] rounded-xl text-xs font-bold flex items-center justify-center gap-2 border border-[#CFE3D1] hover:bg-[#CFE3D1] transition">
-          <Download size={16}/> 匯出報表 (CSV)
-        </button>
-      </div>
-
-      <div className="bg-white rounded-[24px] border border-[#E0E0D9] overflow-hidden">
-        <table className="w-full text-left text-xs">
-          <thead className="bg-[#F0F4F5] text-[#77ABC0]">
-            <tr>
-              <th className="p-3 font-bold">{tab === 'members' ? '暱稱/本名' : '日期/地點'}</th>
-              <th className="p-3 font-bold text-right">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {displayData.map((item, idx) => (
-              <tr key={item.id} className="border-t border-[#FDFBF7] hover:bg-[#F9F9F9]">
-                <td className="p-3">
-                  <div className="font-bold text-[#725E77]">{tab === 'members' ? item.nickname : item.date}</div>
-                  <div className="text-[10px] text-[#C5B8BF]">
-                     {tab === 'members' ? `${item.realName} (${item.birthday || '無生日'})` : item.location}
-                  </div>
-                </td>
-                <td className="p-3 text-right">
-                  <button onClick={() => handleDelete(tab === 'members' ? 'members' : 'logs', item.id)} className="p-2 bg-[#F2D7DD]/50 text-[#BC8F8F] rounded-lg hover:bg-[#BC8F8F] hover:text-white transition">
-                    <Trash2 size={14}/>
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {displayData.length === 0 && (
-              <tr><td colSpan="2" className="p-4 text-center text-[#C5B8BF]">無符合資料</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-};
 
 // --- 1. Dashboard ---
 const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) => {
@@ -838,10 +721,18 @@ const SessionLogManager = ({ sessions, scheduledDates, members, settings, db, ap
 const SessionDetail = ({ session, members, settings, onBack, db, role }) => {
   const [tab, setTab] = useState('tracks'); 
   const [funNotes, setFunNotes] = useState(session.funNotes || "");
+  const [editingLocation, setEditingLocation] = useState(false);
+  const [location, setLocation] = useState(session.location || "圓頭音樂");
 
   const handleUpdateNotes = async () => {
     if (!db) return;
     await updateDoc(getDocRef(db, 'logs', session.id), { funNotes });
+  };
+
+  const handleUpdateLocation = async () => {
+     if (!db) return;
+     await updateDoc(getDocRef(db, 'logs', session.id), { location });
+     setEditingLocation(false);
   };
 
   return (
@@ -849,7 +740,18 @@ const SessionDetail = ({ session, members, settings, onBack, db, role }) => {
       <button onClick={onBack} className="flex items-center gap-1 text-[#C5B8BF] font-bold text-sm mb-4 hover:text-[#725E77]"><ChevronDown className="rotate-90" size={16}/> 返回列表</button>
       <div className="bg-white p-6 rounded-[32px] shadow-sm border border-[#E0E0D9] mb-6">
         <h1 className="text-3xl font-black text-[#725E77]">{session.date}</h1>
-        <div className="flex items-center gap-2 text-[#C5B8BF] text-sm font-bold mt-1"><MapPin size={14}/> {session.location}</div>
+        
+        {editingLocation ? (
+          <div className="flex gap-2 mt-1">
+             <input className="bg-[#FDFBF7] border border-[#77ABC0] rounded-lg px-2 py-1 text-sm text-[#725E77]" value={location} onChange={e=>setLocation(e.target.value)} />
+             <button onClick={handleUpdateLocation} className="text-[#77ABC0]"><Check size={16}/></button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 text-[#C5B8BF] text-sm font-bold mt-1 group cursor-pointer" onClick={() => setEditingLocation(true)}>
+             <MapPin size={14}/> {location} <Pencil size={12} className="opacity-0 group-hover:opacity-100 transition"/>
+          </div>
+        )}
+
         <div className="mt-4 bg-[#F2D7DD]/20 p-3 rounded-2xl border border-[#CBABCA]/20 flex gap-2 items-start">
           <Smile size={16} className="text-[#F1CEBA] shrink-0 mt-0.5"/>
           <textarea 
@@ -877,17 +779,37 @@ const SessionDetail = ({ session, members, settings, onBack, db, role }) => {
   );
 };
 
-// --- TrackList (任何人可編輯內容，但可擴充刪除權限) ---
+// --- TrackList (修復留言功能) ---
 const TrackList = ({ session, db }) => {
   const [expandedTrack, setExpandedTrack] = useState(null);
   const [newTrackName, setNewTrackName] = useState("");
+  const [newComment, setNewComment] = useState("");
   const tracks = session.tracks || [];
+  
+  // 取得當前使用者 (為了留言顯示名字)
+  const auth = getAuth();
+  const currentUser = auth.currentUser;
 
   const handleAddTrack = async () => {
     if (!newTrackName.trim() || !db) return;
     const newTrack = { id: Date.now(), title: newTrackName, status: 'new', link: '', comments: [] };
     await updateDoc(getDocRef(db, 'logs', session.id), { tracks: [...tracks, newTrack] });
     setNewTrackName("");
+  };
+
+  const handleAddComment = async (trackId) => {
+    if (!newComment.trim()) return;
+    const updatedTracks = tracks.map(t => {
+      if (t.id === trackId) {
+        return { 
+           ...t, 
+           comments: [...(t.comments || []), { user: currentUser?.displayName || '團員', text: newComment }] 
+        };
+      }
+      return t;
+    });
+    await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks });
+    setNewComment("");
   };
 
   return (
@@ -905,8 +827,17 @@ const TrackList = ({ session, db }) => {
             <div className="p-4 bg-white border-t border-[#E0E0D9] space-y-3">
               {t.link && <a href={t.link} target="_blank" className="flex items-center gap-2 text-xs text-[#77ABC0] font-bold bg-[#A8D8E2]/20 p-2 rounded-lg"><Play size={14}/> {t.link}</a>}
               <div className="space-y-2">
-                {t.comments.map((c, i) => <div key={i} className="text-xs bg-[#FDFBF7] p-2 rounded-lg text-[#6E7F9B]"><span className="font-bold text-[#725E77]">{c.user}:</span> {c.text}</div>)}
-                <input className="w-full bg-[#FDFBF7] text-xs p-2 rounded-lg outline-none text-[#725E77]" placeholder="輸入留言..." />
+                {(t.comments || []).map((c, i) => <div key={i} className="text-xs bg-[#FDFBF7] p-2 rounded-lg text-[#6E7F9B]"><span className="font-bold text-[#725E77]">{c.user}:</span> {c.text}</div>)}
+                <div className="flex gap-2">
+                   <input 
+                     className="w-full bg-[#FDFBF7] text-xs p-2 rounded-lg outline-none text-[#725E77]" 
+                     placeholder="輸入留言..." 
+                     value={newComment}
+                     onChange={e => setNewComment(e.target.value)}
+                     onKeyDown={e => e.key === 'Enter' && handleAddComment(t.id)}
+                   />
+                   <button onClick={() => handleAddComment(t.id)} className="text-[#77ABC0]"><Check size={16}/></button>
+                </div>
               </div>
             </div>
           )}
@@ -1040,8 +971,18 @@ const MiscFeeCalculator = ({ session, members, settings }) => {
 };
 
 // --- 4. Alcohol Manager (補貨計算機) ---
-const AlcoholManager = ({ alcohols, members, settings, db, role }) => {
+const AlcoholManager = ({ alcohols, members, settings, db, appId, role }) => {
   const [tab, setTab] = useState('list'); // list, calculator
+  const [newAlcohol, setNewAlcohol] = useState({ name: '', type: 'Whiskey', level: 100, rating: 5, note: '' });
+  const [showAdd, setShowAdd] = useState(false);
+
+  const handleAdd = async () => {
+    if (!newAlcohol.name) return;
+    await addDoc(getCollectionRef(db, 'alcohol'), newAlcohol);
+    setShowAdd(false);
+    setNewAlcohol({ name: '', type: 'Whiskey', level: 100, rating: 5, note: '' });
+  };
+
   return (
     <div className="space-y-4 animate-in slide-in-from-right-8">
       <div className="flex bg-[#E0E0D9] p-1 rounded-xl mb-2">
@@ -1052,8 +993,26 @@ const AlcoholManager = ({ alcohols, members, settings, db, role }) => {
       {tab === 'list' ? (
         <div className="space-y-3">
           {role.alcohol && (
-            <button className="w-full py-3 text-[#CBABCA] font-bold text-xs flex items-center justify-center gap-1 border border-dashed border-[#CBABCA] rounded-2xl hover:bg-[#FFF5F7]"><Plus size={14}/> 新增酒品</button>
+            <button onClick={() => setShowAdd(true)} className="w-full py-3 text-[#CBABCA] font-bold text-xs flex items-center justify-center gap-1 border border-dashed border-[#CBABCA] rounded-2xl hover:bg-[#FFF5F7]"><Plus size={14}/> 新增酒品</button>
           )}
+
+          {showAdd && (
+            <div className="bg-white p-4 rounded-[24px] border border-[#77ABC0] space-y-3">
+               <input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="酒名" value={newAlcohol.name} onChange={e=>setNewAlcohol({...newAlcohol, name: e.target.value})} />
+               <select className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" value={newAlcohol.type} onChange={e=>setNewAlcohol({...newAlcohol, type: e.target.value})}>
+                 <option value="Whiskey">Whiskey</option>
+                 <option value="Gin">Gin</option>
+                 <option value="Beer">Beer</option>
+                 <option value="Other">Other</option>
+               </select>
+               <input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="備註..." value={newAlcohol.note} onChange={e=>setNewAlcohol({...newAlcohol, note: e.target.value})} />
+               <div className="flex gap-2">
+                  <button onClick={() => setShowAdd(false)} className="flex-1 p-2 text-xs text-slate-400">取消</button>
+                  <button onClick={handleAdd} className="flex-1 p-2 bg-[#77ABC0] text-white rounded-lg text-xs font-bold">儲存</button>
+               </div>
+            </div>
+          )}
+
           {alcohols.map(a => (
             <div key={a.id} className="bg-white p-5 rounded-[28px] border border-[#E0E0D9] shadow-sm flex gap-4 items-start">
               <div className="bg-[#F0EEE6] w-16 h-20 rounded-2xl flex items-center justify-center shrink-0"><Wine className="text-[#D6C592]" size={32} /></div>
@@ -1114,11 +1073,20 @@ const AlcoholFeeCalculator = ({ members, settings }) => {
 };
 
 // --- 5. Tech View ---
-const TechView = ({ songs, db }) => {
-  const [viewMode, setViewMode] = useState('list'); // list, grid
-  const [filter, setFilter] = useState('all'); // all, cover, tech, gear
+const TechView = ({ songs, db, role, user }) => {
+  const [viewMode, setViewMode] = useState('list'); 
+  const [filter, setFilter] = useState('all'); 
+  const [showAdd, setShowAdd] = useState(false);
+  const [newSong, setNewSong] = useState({ title: '', artist: '', link: '', type: 'cover' });
 
   const filteredSongs = filter === 'all' ? songs : songs.filter(s => s.type.toLowerCase() === filter);
+
+  const handleAdd = async () => {
+    if (!newSong.title || !db) return;
+    await addDoc(getCollectionRef(db, 'songs'), { ...newSong, user: user.displayName });
+    setShowAdd(false);
+    setNewSong({ title: '', artist: '', link: '', type: 'cover' });
+  };
 
   return (
     <div className="space-y-4 animate-in slide-in-from-right-8">
@@ -1137,6 +1105,26 @@ const TechView = ({ songs, db }) => {
           </button>
         ))}
       </div>
+      
+      {/* 新增資源按鈕 (人人可按) */}
+      <button onClick={() => setShowAdd(true)} className="w-full py-3 text-[#77ABC0] font-bold text-xs flex items-center justify-center gap-1 border border-dashed border-[#77ABC0]/50 hover:bg-[#77ABC0]/5 rounded-2xl transition"><Plus size={14}/> 分享資源</button>
+
+      {showAdd && (
+         <div className="bg-white p-4 rounded-[24px] border border-[#77ABC0] space-y-3">
+             <input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="標題 (歌名/器材名)" value={newSong.title} onChange={e=>setNewSong({...newSong, title: e.target.value})} />
+             <input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="說明 (歌手/用途)" value={newSong.artist} onChange={e=>setNewSong({...newSong, artist: e.target.value})} />
+             <input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="連結 (Youtube/Drive)" value={newSong.link} onChange={e=>setNewSong({...newSong, link: e.target.value})} />
+             <select className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" value={newSong.type} onChange={e=>setNewSong({...newSong, type: e.target.value})}>
+                 <option value="cover">Cover</option>
+                 <option value="tech">Tech</option>
+                 <option value="gear">Gear</option>
+             </select>
+             <div className="flex gap-2">
+                <button onClick={() => setShowAdd(false)} className="flex-1 p-2 text-xs text-slate-400">取消</button>
+                <button onClick={handleAdd} className="flex-1 p-2 bg-[#77ABC0] text-white rounded-lg text-xs font-bold">發布</button>
+             </div>
+         </div>
+      )}
 
       <div className={viewMode === 'grid' ? "grid grid-cols-2 gap-3" : "space-y-3"}>
         {filteredSongs.map(s => (
@@ -1151,6 +1139,96 @@ const TechView = ({ songs, db }) => {
             </div>
           </a>
         ))}
+      </div>
+    </div>
+  );
+};
+
+// --- 6. Admin Dashboard (後台管理) ---
+const AdminDashboard = ({ members, logs, db }) => {
+  const [tab, setTab] = useState('members');
+  const [filterStart, setFilterStart] = useState('');
+  const [filterEnd, setFilterEnd] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const handleExport = () => {
+    const dataToExport = tab === 'members' ? members : logs;
+    const filteredData = dataToExport.filter(item => {
+       const inDateRange = tab === 'logs' && filterStart && filterEnd ? (item.date >= filterStart && item.date <= filterEnd) : true;
+       const matchesSearch = searchTerm ? Object.values(item).some(val => String(val).toLowerCase().includes(searchTerm.toLowerCase())) : true;
+       return inDateRange && matchesSearch;
+    });
+
+    const formattedData = filteredData.map(item => {
+      if (tab === 'members') {
+        return { 暱稱: item.nickname, 本名: item.realName, 樂器: item.instrument, 生日: item.birthday, Email: item.email || '未設定', 備註: item.note };
+      } else {
+        return { 日期: item.date, 地點: item.location, 曲目數: item.tracks?.length || 0, 備註: item.funNotes };
+      }
+    });
+
+    exportToCSV(formattedData, `Band_${tab}_export_${new Date().toISOString().slice(0,10)}.csv`);
+  };
+
+  const handleDelete = async (collectionName, id) => {
+    if (confirm("⚠️ 警告：這將永久刪除此筆資料！確定嗎？")) {
+      await deleteDoc(getDocRef(db, collectionName, id));
+    }
+  };
+
+  const displayData = (tab === 'members' ? members : logs).filter(item => {
+     const inDateRange = tab === 'logs' && filterStart && filterEnd ? (item.date >= filterStart && item.date <= filterEnd) : true;
+     const matchesSearch = searchTerm ? Object.values(item).some(val => String(val).toLowerCase().includes(searchTerm.toLowerCase())) : true;
+     return inDateRange && matchesSearch;
+  });
+
+  return (
+    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 pb-20">
+      <div className="bg-white p-5 rounded-[32px] border border-[#E0E0D9] shadow-sm">
+        <h2 className="text-xl font-black text-[#725E77] flex items-center gap-2 mb-4"><Database size={24}/> 後台管理系統</h2>
+        <div className="flex gap-2 mb-4 overflow-x-auto pb-1">
+          <button onClick={() => setTab('members')} className={`px-4 py-2 rounded-xl text-xs font-bold transition ${tab === 'members' ? 'bg-[#77ABC0] text-white' : 'bg-[#F0F4F5] text-[#77ABC0]'}`}>成員名單</button>
+          <button onClick={() => setTab('logs')} className={`px-4 py-2 rounded-xl text-xs font-bold transition ${tab === 'logs' ? 'bg-[#77ABC0] text-white' : 'bg-[#F0F4F5] text-[#77ABC0]'}`}>練團紀錄</button>
+        </div>
+        <div className="bg-[#FDFBF7] p-3 rounded-xl border border-[#E0E0D9] mb-4 space-y-2">
+            <div className="text-[10px] font-bold text-[#C5B8BF] uppercase flex items-center gap-1"><Search size={10}/> 關鍵字搜尋</div>
+            <input type="text" className="w-full p-2 rounded-lg text-xs bg-white border border-[#E0E0D9] outline-none focus:ring-1 ring-[#77ABC0]" placeholder={tab === 'members' ? "搜尋姓名、樂器..." : "搜尋地點、備註..."} value={searchTerm} onChange={e=>setSearchTerm(e.target.value)} />
+        </div>
+        {tab === 'logs' && (
+          <div className="bg-[#FDFBF7] p-3 rounded-xl border border-[#E0E0D9] mb-4 space-y-2">
+            <div className="text-[10px] font-bold text-[#C5B8BF] uppercase flex items-center gap-1"><Filter size={10}/> 日期篩選</div>
+            <div className="flex gap-2">
+              <input type="date" className="w-full p-2 rounded-lg text-xs bg-white border border-[#E0E0D9]" value={filterStart} onChange={e=>setFilterStart(e.target.value)} />
+              <span className="text-[#C5B8BF] self-center">~</span>
+              <input type="date" className="w-full p-2 rounded-lg text-xs bg-white border border-[#E0E0D9]" value={filterEnd} onChange={e=>setFilterEnd(e.target.value)} />
+            </div>
+          </div>
+        )}
+        <button onClick={handleExport} className="w-full py-3 bg-[#E8F1E9] text-[#5F7A61] rounded-xl text-xs font-bold flex items-center justify-center gap-2 border border-[#CFE3D1] hover:bg-[#CFE3D1] transition"><Download size={16}/> 匯出報表 (CSV)</button>
+      </div>
+      <div className="bg-white rounded-[24px] border border-[#E0E0D9] overflow-hidden">
+        <table className="w-full text-left text-xs">
+          <thead className="bg-[#F0F4F5] text-[#77ABC0]">
+            <tr>
+              <th className="p-3 font-bold">{tab === 'members' ? '暱稱/本名' : '日期/地點'}</th>
+              <th className="p-3 font-bold text-right">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {displayData.map((item, idx) => (
+              <tr key={item.id} className="border-t border-[#FDFBF7] hover:bg-[#F9F9F9]">
+                <td className="p-3">
+                  <div className="font-bold text-[#725E77]">{tab === 'members' ? item.nickname : item.date}</div>
+                  <div className="text-[10px] text-[#C5B8BF]">{tab === 'members' ? `${item.realName} (${item.birthday || '無生日'})` : item.location}</div>
+                </td>
+                <td className="p-3 text-right">
+                  <button onClick={() => handleDelete(tab === 'members' ? 'members' : 'logs', item.id)} className="p-2 bg-[#F2D7DD]/50 text-[#BC8F8F] rounded-lg hover:bg-[#BC8F8F] hover:text-white transition"><Trash2 size={14}/></button>
+                </td>
+              </tr>
+            ))}
+            {displayData.length === 0 && <tr><td colSpan="2" className="p-4 text-center text-[#C5B8BF]">無符合資料</td></tr>}
+          </tbody>
+        </table>
       </div>
     </div>
   );
