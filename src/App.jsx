@@ -24,13 +24,11 @@ const MEMBER_EMAILS = [
   "a0916725611@gmail.com",
   "Jesschen39@gmail.com",
   "keyboard@gmail.com",
-  "demo@test.com" // 測試用，正式上線建議移除
 ];
 
 // 2. 超級管理員 (擁有後台、編輯全團資料權限)
 const ADMIN_EMAILS = [
   "jamie.chou0917@gmail.com",
-  "demo@test.com"
 ];
 
 // 3. 特殊職位名稱 (需與團員名單中的本名/暱稱一致)
@@ -201,6 +199,8 @@ const App = () => {
   const [songs, setSongs] = useState([]);
   const [generalData, setGeneralData] = useState(null);
   
+  const appId = USER_CONFIG.appId; 
+
   // Auth 監聽
   useEffect(() => {
     if (auth) {
@@ -208,7 +208,6 @@ const App = () => {
       const unsubAuth = onAuthStateChanged(auth, async (u) => {
         if (u) {
           // --- 白名單檢查 (重要) ---
-          // 在預覽環境中(IS_CANVAS)我們放寬限制方便測試，正式環境則嚴格檢查
           if (!IS_CANVAS && !MEMBER_EMAILS.includes(u.email)) {
             alert(`⛔ 抱歉，您的 Email (${u.email}) 不在團員名單中，無法存取本系統。\n請聯繫團長加入名單。`);
             await signOut(auth);
@@ -391,20 +390,37 @@ const AdminDashboard = ({ members, logs, db }) => {
   const [tab, setTab] = useState('members');
   const [filterStart, setFilterStart] = useState('');
   const [filterEnd, setFilterEnd] = useState('');
+  const [searchTerm, setSearchTerm] = useState(''); // 新增搜尋狀態
 
   const handleExport = () => {
     const dataToExport = tab === 'members' ? members : logs;
     const filteredData = dataToExport.filter(item => {
-       if (tab === 'logs' && filterStart && filterEnd) {
-         return item.date >= filterStart && item.date <= filterEnd;
-       }
-       return true;
+       const inDateRange = tab === 'logs' && filterStart && filterEnd ? (item.date >= filterStart && item.date <= filterEnd) : true;
+       // 關鍵字搜尋邏輯
+       const matchesSearch = searchTerm ? Object.values(item).some(val => 
+         String(val).toLowerCase().includes(searchTerm.toLowerCase())
+       ) : true;
+       return inDateRange && matchesSearch;
     });
-    
-    // 簡單格式化
+
     const formattedData = filteredData.map(item => {
-        if(tab === 'members') return { 暱稱: item.nickname, 本名: item.realName, 樂器: item.instrument, 生日: item.birthday, Email: item.email };
-        else return { 日期: item.date, 地點: item.location, 備註: item.funNotes };
+      if (tab === 'members') {
+        return {
+          暱稱: item.nickname,
+          本名: item.realName,
+          樂器: item.instrument,
+          生日: item.birthday,
+          Email: item.email || '未設定',
+          備註: item.note
+        };
+      } else {
+        return {
+          日期: item.date,
+          地點: item.location,
+          曲目數: item.tracks?.length || 0,
+          備註: item.funNotes
+        };
+      }
     });
 
     exportToCSV(formattedData, `Band_${tab}_export_${new Date().toISOString().slice(0,10)}.csv`);
@@ -416,6 +432,15 @@ const AdminDashboard = ({ members, logs, db }) => {
     }
   };
 
+  // 篩選資料以供顯示
+  const displayData = (tab === 'members' ? members : logs).filter(item => {
+     const inDateRange = tab === 'logs' && filterStart && filterEnd ? (item.date >= filterStart && item.date <= filterEnd) : true;
+     const matchesSearch = searchTerm ? Object.values(item).some(val => 
+       String(val).toLowerCase().includes(searchTerm.toLowerCase())
+     ) : true;
+     return inDateRange && matchesSearch;
+  });
+
   return (
     <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 pb-20">
       <div className="bg-white p-5 rounded-[32px] border border-[#E0E0D9] shadow-sm">
@@ -426,6 +451,18 @@ const AdminDashboard = ({ members, logs, db }) => {
         <div className="flex gap-2 mb-4 overflow-x-auto pb-1">
           <button onClick={() => setTab('members')} className={`px-4 py-2 rounded-xl text-xs font-bold transition ${tab === 'members' ? 'bg-[#77ABC0] text-white' : 'bg-[#F0F4F5] text-[#77ABC0]'}`}>成員名單</button>
           <button onClick={() => setTab('logs')} className={`px-4 py-2 rounded-xl text-xs font-bold transition ${tab === 'logs' ? 'bg-[#77ABC0] text-white' : 'bg-[#F0F4F5] text-[#77ABC0]'}`}>練團紀錄</button>
+        </div>
+
+        {/* 搜尋框 */}
+        <div className="bg-[#FDFBF7] p-3 rounded-xl border border-[#E0E0D9] mb-4 space-y-2">
+            <div className="text-[10px] font-bold text-[#C5B8BF] uppercase flex items-center gap-1"><Search size={10}/> 關鍵字搜尋</div>
+            <input 
+              type="text" 
+              className="w-full p-2 rounded-lg text-xs bg-white border border-[#E0E0D9] outline-none focus:ring-1 ring-[#77ABC0]" 
+              placeholder={tab === 'members' ? "搜尋姓名、樂器..." : "搜尋地點、備註..."}
+              value={searchTerm} 
+              onChange={e=>setSearchTerm(e.target.value)} 
+            />
         </div>
 
         {tab === 'logs' && (
@@ -453,7 +490,7 @@ const AdminDashboard = ({ members, logs, db }) => {
             </tr>
           </thead>
           <tbody>
-            {(tab === 'members' ? members : logs).map((item, idx) => (
+            {displayData.map((item, idx) => (
               <tr key={item.id} className="border-t border-[#FDFBF7] hover:bg-[#F9F9F9]">
                 <td className="p-3">
                   <div className="font-bold text-[#725E77]">{tab === 'members' ? item.nickname : item.date}</div>
@@ -468,8 +505,8 @@ const AdminDashboard = ({ members, logs, db }) => {
                 </td>
               </tr>
             ))}
-            {(tab === 'members' ? members : logs).length === 0 && (
-              <tr><td colSpan="2" className="p-4 text-center text-[#C5B8BF]">無資料</td></tr>
+            {displayData.length === 0 && (
+              <tr><td colSpan="2" className="p-4 text-center text-[#C5B8BF]">無符合資料</td></tr>
             )}
           </tbody>
         </table>
@@ -541,6 +578,7 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
     <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
       <div className="bg-white p-6 rounded-3xl w-full max-w-sm space-y-4 max-h-[80vh] overflow-y-auto">
         <h3 className="font-bold text-lg text-[#725E77]">設定本月練團時間</h3>
+        <p className="text-xs text-slate-400">請一次規劃好本月的場次，日誌會自動連動。</p>
         {practices.map((p, idx) => (
           <div key={idx} className="bg-[#FDFBF7] p-3 rounded-xl border border-[#E0E0D9] space-y-2 relative">
              <button onClick={() => setPractices(practices.filter((_, i) => i !== idx))} className="absolute top-2 right-2 text-[#BC8F8F]"><MinusCircle size={16}/></button>
@@ -703,12 +741,13 @@ const MemberEditModal = ({ member, onClose, onSave }) => {
 const SessionLogManager = ({ sessions, scheduledDates, members, settings, db, appId, role }) => {
   const [activeSessionId, setActiveSessionId] = useState(null);
   
+  // scheduledDates 現在是 practices 陣列，需要先提取日期
   const practices = scheduledDates || []; 
   const existingSessionDates = sessions.map(s => s.date);
 
   const pendingPractices = practices.filter(p => {
       const pDate = p.date.split('T')[0];
-      return !existingDates.includes(pDate);
+      return !sessions.some(s => s.date.startsWith(pDate));
   }).sort((a,b) => new Date(a.date) - new Date(b.date));
 
   const [showManualCreate, setShowManualCreate] = useState(false);
@@ -838,7 +877,7 @@ const SessionDetail = ({ session, members, settings, onBack, db, role }) => {
   );
 };
 
-// --- TrackList (任何人可編輯內容) ---
+// --- TrackList (任何人可編輯內容，但可擴充刪除權限) ---
 const TrackList = ({ session, db }) => {
   const [expandedTrack, setExpandedTrack] = useState(null);
   const [newTrackName, setNewTrackName] = useState("");
@@ -1112,112 +1151,6 @@ const TechView = ({ songs, db }) => {
             </div>
           </a>
         ))}
-      </div>
-    </div>
-  );
-};
-
-// --- 6. Admin Dashboard (後台管理) ---
-const AdminDashboard = ({ members, logs, db }) => {
-  const [tab, setTab] = useState('members');
-  const [filterStart, setFilterStart] = useState('');
-  const [filterEnd, setFilterEnd] = useState('');
-
-  const handleExport = () => {
-    const dataToExport = tab === 'members' ? members : logs;
-    const filteredData = dataToExport.filter(item => {
-       if (tab === 'logs' && filterStart && filterEnd) {
-         return item.date >= filterStart && item.date <= filterEnd;
-       }
-       return true;
-    });
-
-    const formattedData = filteredData.map(item => {
-      if (tab === 'members') {
-        return {
-          暱稱: item.nickname,
-          本名: item.realName,
-          樂器: item.instrument,
-          生日: item.birthday,
-          Email: item.email || '未設定',
-          備註: item.note
-        };
-      } else {
-        return {
-          日期: item.date,
-          地點: item.location,
-          曲目數: item.tracks?.length || 0,
-          備註: item.funNotes
-        };
-      }
-    });
-
-    exportToCSV(formattedData, `Band_${tab}_export_${new Date().toISOString().slice(0,10)}.csv`);
-  };
-
-  const handleDelete = async (collectionName, id) => {
-    if (confirm("⚠️ 警告：這將永久刪除此筆資料！確定嗎？")) {
-      await deleteDoc(getDocRef(db, collectionName, id));
-    }
-  };
-
-  return (
-    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 pb-20">
-      <div className="bg-white p-5 rounded-[32px] border border-[#E0E0D9] shadow-sm">
-        <h2 className="text-xl font-black text-[#725E77] flex items-center gap-2 mb-4">
-          <Database size={24}/> 後台管理系統
-        </h2>
-        
-        <div className="flex gap-2 mb-4 overflow-x-auto pb-1">
-          <button onClick={() => setTab('members')} className={`px-4 py-2 rounded-xl text-xs font-bold transition ${tab === 'members' ? 'bg-[#77ABC0] text-white' : 'bg-[#F0F4F5] text-[#77ABC0]'}`}>成員名單</button>
-          <button onClick={() => setTab('logs')} className={`px-4 py-2 rounded-xl text-xs font-bold transition ${tab === 'logs' ? 'bg-[#77ABC0] text-white' : 'bg-[#F0F4F5] text-[#77ABC0]'}`}>練團紀錄</button>
-        </div>
-
-        {tab === 'logs' && (
-          <div className="bg-[#FDFBF7] p-3 rounded-xl border border-[#E0E0D9] mb-4 space-y-2">
-            <div className="text-[10px] font-bold text-[#C5B8BF] uppercase flex items-center gap-1"><Filter size={10}/> 日期篩選</div>
-            <div className="flex gap-2">
-              <input type="date" className="w-full p-2 rounded-lg text-xs bg-white border border-[#E0E0D9]" value={filterStart} onChange={e=>setFilterStart(e.target.value)} />
-              <span className="text-[#C5B8BF] self-center">~</span>
-              <input type="date" className="w-full p-2 rounded-lg text-xs bg-white border border-[#E0E0D9]" value={filterEnd} onChange={e=>setFilterEnd(e.target.value)} />
-            </div>
-          </div>
-        )}
-
-        <button onClick={handleExport} className="w-full py-3 bg-[#E8F1E9] text-[#5F7A61] rounded-xl text-xs font-bold flex items-center justify-center gap-2 border border-[#CFE3D1] hover:bg-[#CFE3D1] transition">
-          <Download size={16}/> 匯出報表 (CSV)
-        </button>
-      </div>
-
-      <div className="bg-white rounded-[24px] border border-[#E0E0D9] overflow-hidden">
-        <table className="w-full text-left text-xs">
-          <thead className="bg-[#F0F4F5] text-[#77ABC0]">
-            <tr>
-              <th className="p-3 font-bold">{tab === 'members' ? '暱稱/本名' : '日期/地點'}</th>
-              <th className="p-3 font-bold text-right">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(tab === 'members' ? members : logs).map((item, idx) => (
-              <tr key={item.id} className="border-t border-[#FDFBF7] hover:bg-[#F9F9F9]">
-                <td className="p-3">
-                  <div className="font-bold text-[#725E77]">{tab === 'members' ? item.nickname : item.date}</div>
-                  <div className="text-[10px] text-[#C5B8BF]">
-                     {tab === 'members' ? `${item.realName} (${item.birthday || '無生日'})` : item.location}
-                  </div>
-                </td>
-                <td className="p-3 text-right">
-                  <button onClick={() => handleDelete(tab === 'members' ? 'members' : 'logs', item.id)} className="p-2 bg-[#F2D7DD]/50 text-[#BC8F8F] rounded-lg hover:bg-[#BC8F8F] hover:text-white transition">
-                    <Trash2 size={14}/>
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {(tab === 'members' ? members : logs).length === 0 && (
-              <tr><td colSpan="2" className="p-4 text-center text-[#C5B8BF]">無資料</td></tr>
-            )}
-          </tbody>
-        </table>
       </div>
     </div>
   );
