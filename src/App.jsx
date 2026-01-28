@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signInWithCustomToken, signOut, signInAnonymously } from 'firebase/auth';
+import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signInWithCustomToken, signOut, signInWithRedirect, getRedirectResult } from 'firebase/auth';
 import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { 
   Music2, Mic2, Users, ClipboardList, Beer, Calendar, 
@@ -10,19 +10,32 @@ import {
   MapPin, CalendarPlus, Cake, XCircle, CheckCircle2,
   Wallet, Receipt, Coffee, Gift, Zap, LayoutGrid, List,
   PartyPopper, Headphones, Speaker, Star, Image as ImageIcon, Disc,
-  Ghost, Pencil, Trash2, Lock, Save, MinusCircle, FilePlus
+  Ghost, Pencil, Trash2, Lock, Save, MinusCircle, FilePlus, AlertTriangle,
+  Database, Download, Filter, Search
 } from 'lucide-react';
 
-// --- 🔐 1. 超級管理員設定 (最高權限) ---
-const ADMIN_EMAILS = [
+// ==========================================
+// 🔐 權限管理區 (請在此設定)
+// ==========================================
+
+// 1. 團員白名單 (只有這些 Email 可以登入使用)
+const MEMBER_EMAILS = [
   "jamie.chou0917@gmail.com", 
-  "drummer@gmail.com",
+  "a0916725611@gmail.com",
+  "Jesschen39@gmail.com",
+  "keyboard@gmail.com",
+  "demo@test.com" // 測試用，正式上線建議移除
+];
+
+// 2. 超級管理員 (擁有後台、編輯全團資料權限)
+const ADMIN_EMAILS = [
+  "jamie.chou0917@gmail.com",
   "demo@test.com"
 ];
 
-// --- 2. 特殊職位名稱 ---
-const ROLE_FINANCE_NAME = "陳昱維"; 
-const ROLE_ALCOHOL_NAME = "李家賢"; 
+// 3. 特殊職位名稱 (需與團員名單中的本名/暱稱一致)
+const ROLE_FINANCE_NAME = "陳昱維"; // 財務大臣
+const ROLE_ALCOHOL_NAME = "李家賢"; // 酒水總管
 
 // --- 🎸 樂團專屬設定 ---
 const BAND_LOGO_BASE64 = ""; 
@@ -55,6 +68,62 @@ const secureCopy = (text) => {
     document.body.removeChild(textArea);
     return false;
   }
+};
+
+// --- 工具: 匯出 CSV ---
+const exportToCSV = (data, filename) => {
+  if (!data || !data.length) {
+    alert("沒有資料可匯出");
+    return;
+  }
+  // 處理資料欄位，確保沒有 undefined
+  const processedData = data.map(row => {
+    const newRow = {};
+    Object.keys(row).forEach(key => {
+       // 排除複雜物件，只留字串與數字
+       if (typeof row[key] !== 'object' || row[key] === null) {
+         newRow[key] = row[key];
+       } else if (key === 'tracks') {
+         newRow['曲目數'] = row[key].length;
+       }
+    });
+    return newRow;
+  });
+
+  const separator = ',';
+  const keys = Object.keys(processedData[0]);
+  const csvContent =
+    '\uFEFF' + // 加入 BOM 解決 Excel 中文亂碼
+    keys.join(separator) +
+    '\n' +
+    processedData.map(row => {
+      return keys.map(k => {
+        let cell = row[k] === null || row[k] === undefined ? '' : row[k];
+        cell = cell.toString().replace(/"/g, '""');
+        if (cell.search(/("|,|\n)/g) >= 0) cell = `"${cell}"`;
+        return cell;
+      }).join(separator);
+    }).join('\n');
+
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  if (link.download !== undefined) {
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+};
+
+// --- 工具: 生日顯示 (隱藏年份) ---
+const formatBirthdayDisplay = (dateStr) => {
+  if (!dateStr) return "未知";
+  const parts = dateStr.split('-');
+  if (parts.length === 3) return `${parts[1]}/${parts[2]}`; // 只回傳 月/日
+  return dateStr;
 };
 
 const getZodiac = (dateStr) => {
@@ -91,6 +160,11 @@ const USER_CONFIG = {
   appId: "1:193559225053:web:124fd5a7ab3cf1a854f134"
 };
 const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : USER_CONFIG;
+// 判斷是否為預覽環境
+const IS_CANVAS = typeof __firebase_config !== 'undefined';
+// 預覽環境用 artifacts 路徑，正式環境用根目錄
+const getCollectionRef = (db, name) => IS_CANVAS ? collection(db, 'artifacts', 'band-manager-preview', 'public', 'data', name) : collection(db, name);
+const getDocRef = (db, name, id) => IS_CANVAS ? doc(db, 'artifacts', 'band-manager-preview', 'public', 'data', name, id) : doc(db, name, id);
 
 let auth, googleProvider, db;
 try {
@@ -106,10 +180,10 @@ try {
 const DEFAULT_GENERAL_DATA = {
   settings: {
     studioRate: 350, kbRate: 200,     
-    studioBankAccount: '(待設定)', miscBankAccount: '(待設定)' 
+    studioBankAccount: '(013)國泰世華 699514620885', 
+    miscBankAccount: '(待設定)' 
   },
-  nextPractice: { date: new Date().toISOString(), title: '下次練團', location: '未定地點' },
-  currentMonthSessions: []
+  practices: [] 
 };
 
 const App = () => {
@@ -119,26 +193,32 @@ const App = () => {
   const [imgError, setImgError] = useState(false);
   const [showPrankModal, setShowPrankModal] = useState(false);
   
-  // --- 權限狀態 ---
+  // 權限與資料狀態
   const [role, setRole] = useState({ admin: false, finance: false, alcohol: false });
-
-  // 真實資料狀態
   const [members, setMembers] = useState([]);
   const [logs, setLogs] = useState([]);
   const [alcohols, setAlcohols] = useState([]);
   const [songs, setSongs] = useState([]);
-  const [generalData, setGeneralData] = useState(DEFAULT_GENERAL_DATA);
+  const [generalData, setGeneralData] = useState(null);
   
-  const appId = USER_CONFIG.appId; 
-
   // Auth 監聽
   useEffect(() => {
     if (auth) {
-      const unsubAuth = onAuthStateChanged(auth, u => {
-        setUser(u);
-        setLoading(false);
-        if (!u && typeof __firebase_config !== 'undefined') {
-            setTimeout(() => setUser({ uid: 'demo', displayName: '體驗帳號', photoURL: null, email: 'demo@test.com' }), 1000);
+      getRedirectResult(auth).catch(e => console.log(e));
+      const unsubAuth = onAuthStateChanged(auth, async (u) => {
+        if (u) {
+          // --- 白名單檢查 (重要) ---
+          // 在預覽環境中(IS_CANVAS)我們放寬限制方便測試，正式環境則嚴格檢查
+          if (!IS_CANVAS && !MEMBER_EMAILS.includes(u.email)) {
+            alert(`⛔ 抱歉，您的 Email (${u.email}) 不在團員名單中，無法存取本系統。\n請聯繫團長加入名單。`);
+            await signOut(auth);
+            setUser(null); setLoading(false); return;
+          }
+          setUser(u); setLoading(false);
+        } else {
+          setUser(null); setLoading(false);
+          // 移除自動登入，僅保留預覽環境的方便性
+          if (IS_CANVAS) setTimeout(() => setUser({ uid: 'demo', displayName: '體驗帳號', photoURL: null, email: 'demo@test.com' }), 1000);
         }
       });
       if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
@@ -155,10 +235,13 @@ const App = () => {
     if (user) {
       const userEmail = user.email;
       const isAdmin = ADMIN_EMAILS.includes(userEmail);
+      
       const financeMember = members.find(m => m.realName === ROLE_FINANCE_NAME || m.nickname === ROLE_FINANCE_NAME);
       const isFinance = isAdmin || (financeMember && financeMember.email === userEmail);
+      
       const alcoholMember = members.find(m => m.realName === ROLE_ALCOHOL_NAME || m.nickname === ROLE_ALCOHOL_NAME);
       const isAlcohol = isAdmin || (alcoholMember && alcoholMember.email === userEmail);
+
       setRole({ admin: isAdmin, finance: isFinance, alcohol: isAlcohol });
     } else {
       setRole({ admin: false, finance: false, alcohol: false });
@@ -169,30 +252,20 @@ const App = () => {
   useEffect(() => {
     if (!db || !user) return;
 
-    // 簡化路徑，避免權限錯誤
-    const unsubMembers = onSnapshot(collection(db, 'members'), (snap) => {
-      setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (error) => {
-      if (error.code === 'permission-denied') console.error("Permission denied. Check Firestore Rules.");
-    });
-    const unsubLogs = onSnapshot(collection(db, 'logs'), (snap) => {
-      setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => new Date(b.date) - new Date(a.date)));
-    });
-    const unsubAlcohol = onSnapshot(collection(db, 'alcohol'), (snap) => {
-      setAlcohols(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
-    const unsubSongs = onSnapshot(collection(db, 'songs'), (snap) => {
-      setSongs(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
-    const unsubGeneral = onSnapshot(doc(db, 'general', 'info'), (docSnap) => {
+    const unsubMembers = onSnapshot(getCollectionRef(db, 'members'), (snap) => setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() }))), 
+      (err) => { if (err.code === 'permission-denied') console.warn("Permission denied. Check Firestore Rules."); });
+    
+    const unsubLogs = onSnapshot(getCollectionRef(db, 'logs'), (snap) => setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => new Date(b.date) - new Date(a.date))));
+    const unsubAlcohol = onSnapshot(getCollectionRef(db, 'alcohol'), (snap) => setAlcohols(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const unsubSongs = onSnapshot(getCollectionRef(db, 'songs'), (snap) => setSongs(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    
+    const unsubGeneral = onSnapshot(getDocRef(db, 'general', 'info'), (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
-        if (data.nextPractice && !data.practices) {
-            data.practices = [data.nextPractice];
-        }
+        if (data.nextPractice && !data.practices) data.practices = [data.nextPractice]; 
         setGeneralData(data);
       } else {
-        setDoc(doc(db, 'general', 'info'), DEFAULT_GENERAL_DATA);
+        setDoc(getDocRef(db, 'general', 'info'), DEFAULT_GENERAL_DATA);
       }
     });
 
@@ -201,19 +274,26 @@ const App = () => {
 
   const handleLogin = async () => {
     try { await signInWithPopup(auth, googleProvider); } 
-    catch (err) { alert(`登入失敗 (Code: ${err.code})`); }
+    catch (err) { 
+       console.warn("Popup failed, trying redirect");
+       signInWithRedirect(auth, googleProvider);
+    }
   };
   
   const handleLogout = async () => {
-    await signOut(auth); setUser(null); setIsAdmin(false);
+    await signOut(auth); setUser(null); setRole({ admin: false, finance: false, alcohol: false });
   };
 
   const renderContent = () => {
+    if (!generalData && activeTab === 'dashboard') return <div className="h-full flex items-center justify-center text-slate-400"><Loader2 className="animate-spin"/> 資料同步中...</div>;
+    const data = generalData || DEFAULT_GENERAL_DATA;
+
     switch (activeTab) {
-      case 'dashboard': return <DashboardView members={members} generalData={generalData} alcoholCount={alcohols.length} db={db} role={role} user={user} />;
-      case 'logs': return <SessionLogManager sessions={logs} scheduledDates={generalData.currentMonthSessions || []} members={members} settings={generalData.settings} db={db} role={role} />;
-      case 'alcohol': return <AlcoholManager alcohols={alcohols} members={members} settings={generalData.settings} db={db} role={role} />;
-      case 'tech': return <TechView songs={songs} db={db} />;
+      case 'dashboard': return <DashboardView members={members} generalData={data} alcoholCount={alcohols.length} db={db} role={role} user={user} />;
+      case 'logs': return <SessionLogManager sessions={logs} practices={data.practices || []} members={members} settings={data.settings} db={db} role={role} />;
+      case 'alcohol': return <AlcoholManager alcohols={alcohols} members={members} settings={data.settings} db={db} role={role} />;
+      case 'tech': return <TechView songs={songs} db={db} role={role} user={user} />;
+      case 'admin': return <AdminDashboard members={members} logs={logs} db={db} />;
       default: return <DashboardView />;
     }
   };
@@ -235,10 +315,14 @@ const App = () => {
         <div className="bg-white p-8 rounded-[32px] shadow-xl max-w-sm w-full">
            <div className="flex justify-center mb-6"><BandLogo /></div>
            <h1 className="text-2xl font-black text-[#725E77] mb-2">{BAND_NAME}</h1>
-           <p className="text-[#6E7F9B] font-bold mb-8">樂團專用管理系統</p>
+           <p className="text-[#6E7F9B] font-bold mb-4">樂團專用管理系統</p>
            <button onClick={handleLogin} className="w-full bg-[#77ABC0] text-white py-4 rounded-2xl font-bold flex items-center justify-center gap-2 shadow-lg shadow-[#77ABC0]/30 active:scale-95 transition">
              <ShieldCheck size={20}/> Google 登入
            </button>
+           <div className="mt-6 p-3 bg-indigo-50 rounded-xl text-xs text-indigo-800 text-left border border-indigo-100">
+             <div className="flex items-center gap-1 font-bold mb-1"><Lock size={12}/> 存取限制</div>
+             本系統僅限受邀團員登入。若無法進入，請聯繫管理員加入白名單。
+           </div>
         </div>
       </div>
     );
@@ -255,7 +339,7 @@ const App = () => {
           {role.admin && <span className="bg-rose-100 text-rose-600 text-[10px] px-2 py-0.5 rounded-full font-bold">Admin</span>}
           <div className="flex flex-col items-end mr-1">
              <span className="text-xs font-bold text-[#CBABCA]">{user?.displayName}</span>
-             <span className="text-[9px] text-slate-400">{user?.email}</span>
+             <span className="text-[9px] text-slate-400 max-w-[80px] truncate">{user?.email}</span>
           </div>
           <div className="w-8 h-8 bg-[#E5C3D3]/20 rounded-full flex items-center justify-center text-[#77ABC0] font-bold border-2 border-white shadow-sm overflow-hidden">
              {user.photoURL ? <img src={user.photoURL} alt="U" /> : user.displayName?.[0]}
@@ -273,7 +357,11 @@ const App = () => {
           <button onClick={handlePrankClick} className="w-14 h-14 rounded-full flex items-center justify-center shadow-xl border-4 border-[#FDFBF7] bg-[#F1CEBA] text-white transition-all duration-500 hover:rotate-12 active:scale-95" title="不要按我！"><Ghost size={24} /></button>
         </div>
         <NavBtn id="alcohol" icon={Beer} label="酒櫃" active={activeTab} set={setActiveTab} />
-        <NavBtn id="tech" icon={Zap} label="資源" active={activeTab} set={setActiveTab} />
+        {role.admin ? (
+           <NavBtn id="admin" icon={Database} label="後台" active={activeTab} set={setActiveTab} />
+        ) : (
+           <NavBtn id="tech" icon={Zap} label="資源" active={activeTab} set={setActiveTab} />
+        )}
       </nav>
 
       {showPrankModal && (
@@ -298,6 +386,98 @@ const NavBtn = ({ id, icon: Icon, label, active, set }) => (
   </button>
 );
 
+// --- 6. Admin Dashboard (後台管理) ---
+const AdminDashboard = ({ members, logs, db }) => {
+  const [tab, setTab] = useState('members');
+  const [filterStart, setFilterStart] = useState('');
+  const [filterEnd, setFilterEnd] = useState('');
+
+  const handleExport = () => {
+    const dataToExport = tab === 'members' ? members : logs;
+    const filteredData = dataToExport.filter(item => {
+       if (tab === 'logs' && filterStart && filterEnd) {
+         return item.date >= filterStart && item.date <= filterEnd;
+       }
+       return true;
+    });
+    
+    // 簡單格式化
+    const formattedData = filteredData.map(item => {
+        if(tab === 'members') return { 暱稱: item.nickname, 本名: item.realName, 樂器: item.instrument, 生日: item.birthday, Email: item.email };
+        else return { 日期: item.date, 地點: item.location, 備註: item.funNotes };
+    });
+
+    exportToCSV(formattedData, `Band_${tab}_export_${new Date().toISOString().slice(0,10)}.csv`);
+  };
+
+  const handleDelete = async (collectionName, id) => {
+    if (confirm("⚠️ 警告：這將永久刪除此筆資料！確定嗎？")) {
+      await deleteDoc(getDocRef(db, collectionName, id));
+    }
+  };
+
+  return (
+    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 pb-20">
+      <div className="bg-white p-5 rounded-[32px] border border-[#E0E0D9] shadow-sm">
+        <h2 className="text-xl font-black text-[#725E77] flex items-center gap-2 mb-4">
+          <Database size={24}/> 後台管理系統
+        </h2>
+        
+        <div className="flex gap-2 mb-4 overflow-x-auto pb-1">
+          <button onClick={() => setTab('members')} className={`px-4 py-2 rounded-xl text-xs font-bold transition ${tab === 'members' ? 'bg-[#77ABC0] text-white' : 'bg-[#F0F4F5] text-[#77ABC0]'}`}>成員名單</button>
+          <button onClick={() => setTab('logs')} className={`px-4 py-2 rounded-xl text-xs font-bold transition ${tab === 'logs' ? 'bg-[#77ABC0] text-white' : 'bg-[#F0F4F5] text-[#77ABC0]'}`}>練團紀錄</button>
+        </div>
+
+        {tab === 'logs' && (
+          <div className="bg-[#FDFBF7] p-3 rounded-xl border border-[#E0E0D9] mb-4 space-y-2">
+            <div className="text-[10px] font-bold text-[#C5B8BF] uppercase flex items-center gap-1"><Filter size={10}/> 日期篩選</div>
+            <div className="flex gap-2">
+              <input type="date" className="w-full p-2 rounded-lg text-xs bg-white border border-[#E0E0D9]" value={filterStart} onChange={e=>setFilterStart(e.target.value)} />
+              <span className="text-[#C5B8BF] self-center">~</span>
+              <input type="date" className="w-full p-2 rounded-lg text-xs bg-white border border-[#E0E0D9]" value={filterEnd} onChange={e=>setFilterEnd(e.target.value)} />
+            </div>
+          </div>
+        )}
+
+        <button onClick={handleExport} className="w-full py-3 bg-[#E8F1E9] text-[#5F7A61] rounded-xl text-xs font-bold flex items-center justify-center gap-2 border border-[#CFE3D1] hover:bg-[#CFE3D1] transition">
+          <Download size={16}/> 匯出報表 (CSV)
+        </button>
+      </div>
+
+      <div className="bg-white rounded-[24px] border border-[#E0E0D9] overflow-hidden">
+        <table className="w-full text-left text-xs">
+          <thead className="bg-[#F0F4F5] text-[#77ABC0]">
+            <tr>
+              <th className="p-3 font-bold">{tab === 'members' ? '暱稱/本名' : '日期/地點'}</th>
+              <th className="p-3 font-bold text-right">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(tab === 'members' ? members : logs).map((item, idx) => (
+              <tr key={item.id} className="border-t border-[#FDFBF7] hover:bg-[#F9F9F9]">
+                <td className="p-3">
+                  <div className="font-bold text-[#725E77]">{tab === 'members' ? item.nickname : item.date}</div>
+                  <div className="text-[10px] text-[#C5B8BF]">
+                     {tab === 'members' ? `${item.realName} (${item.birthday || '無生日'})` : item.location}
+                  </div>
+                </td>
+                <td className="p-3 text-right">
+                  <button onClick={() => handleDelete(tab === 'members' ? 'members' : 'logs', item.id)} className="p-2 bg-[#F2D7DD]/50 text-[#BC8F8F] rounded-lg hover:bg-[#BC8F8F] hover:text-white transition">
+                    <Trash2 size={14}/>
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {(tab === 'members' ? members : logs).length === 0 && (
+              <tr><td colSpan="2" className="p-4 text-center text-[#C5B8BF]">無資料</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
 // --- 1. Dashboard ---
 const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) => {
   const [editingPractice, setEditingPractice] = useState(false);
@@ -307,14 +487,15 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
   
   const now = new Date();
   const sortedPractices = [...practices]
-    .map(p => ({...p, dateObj: new Date(p.date)}))
+    .map(p => ({...p, dateObj: new Date(p.date), endObj: p.endTime ? new Date(p.endTime) : new Date(new Date(p.date).getTime() + 2*60*60*1000) }))
     .sort((a,b) => a.dateObj - b.dateObj);
-  const nextPractice = sortedPractices.find(p => p.dateObj >= now) || sortedPractices[sortedPractices.length - 1] || { date: new Date().toISOString(), title: '尚未安排', location: '-' };
+  
+  const nextPractice = sortedPractices.find(p => p.dateObj >= now) || sortedPractices[sortedPractices.length - 1] || { date: new Date().toISOString(), title: '尚未安排', location: '圓頭音樂' };
   const diffDays = Math.ceil((new Date(nextPractice.date) - now) / (1000 * 60 * 60 * 24)); 
 
   const handleUpdatePractices = async () => {
     if (!db) return;
-    await updateDoc(doc(db, 'general', 'info'), { practices: practices });
+    await updateDoc(getDocRef(db, 'general', 'info'), { practices: practices });
     setEditingPractice(false);
   };
 
@@ -330,28 +511,29 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
     } else {
       newAttendance = [...currentAttendance, dateStr];
     }
-    await updateDoc(doc(db, 'members', memberId), { attendance: newAttendance });
+    await updateDoc(getDocRef(db, 'members', memberId), { attendance: newAttendance });
   };
 
   const handleSaveMember = async (memberData) => {
     if (!db) return;
     if (memberData.id) {
-      await updateDoc(doc(db, 'members', memberData.id), memberData);
+      await updateDoc(getDocRef(db, 'members', memberData.id), memberData);
     } else {
-      await addDoc(collection(db, 'members'), memberData);
+      await addDoc(getCollectionRef(db, 'members'), memberData);
     }
     setEditingMember(null);
   };
 
   const handleDeleteMember = async (id) => {
     if (confirm("確定要刪除這位團員嗎？")) {
-       await deleteDoc(doc(db, 'members', id));
+       await deleteDoc(getDocRef(db, 'members', id));
     }
   };
 
   const addToCalendarUrl = () => {
     const start = new Date(nextPractice.date).toISOString().replace(/-|:|\.\d\d\d/g, "");
-    const end = new Date(new Date(nextPractice.date).getTime() + 2*3600000).toISOString().replace(/-|:|\.\d\d\d/g, ""); 
+    const endTime = nextPractice.endTime ? new Date(nextPractice.endTime) : new Date(new Date(nextPractice.date).getTime() + 2*60*60*1000);
+    const end = endTime.toISOString().replace(/-|:|\.\d\d\d/g, ""); 
     return `https://www.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(nextPractice.title)}&dates=${start}/${end}&location=${encodeURIComponent(nextPractice.location)}`;
   };
 
@@ -362,8 +544,13 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
         {practices.map((p, idx) => (
           <div key={idx} className="bg-[#FDFBF7] p-3 rounded-xl border border-[#E0E0D9] space-y-2 relative">
              <button onClick={() => setPractices(practices.filter((_, i) => i !== idx))} className="absolute top-2 right-2 text-[#BC8F8F]"><MinusCircle size={16}/></button>
+             <div className="text-xs text-[#C5B8BF] font-bold">開始</div>
              <input type="datetime-local" className="w-full bg-white p-2 rounded-lg text-sm" value={p.date} onChange={e => {
                const newP = [...practices]; newP[idx].date = e.target.value; setPractices(newP);
+             }} />
+             <div className="text-xs text-[#C5B8BF] font-bold">結束</div>
+             <input type="datetime-local" className="w-full bg-white p-2 rounded-lg text-sm" value={p.endTime || ''} onChange={e => {
+               const newP = [...practices]; newP[idx].endTime = e.target.value; setPractices(newP);
              }} />
              <input type="text" className="w-full bg-white p-2 rounded-lg text-sm" placeholder="標題 (例: 2月第一練)" value={p.title} onChange={e => {
                const newP = [...practices]; newP[idx].title = e.target.value; setPractices(newP);
@@ -373,7 +560,7 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
              }} />
           </div>
         ))}
-        <button onClick={() => setPractices([...practices, { date: new Date().toISOString(), title: '新練團', location: '未定' }])} className="w-full py-2 border-2 border-dashed border-[#77ABC0] text-[#77ABC0] rounded-xl font-bold flex justify-center items-center gap-1">
+        <button onClick={() => setPractices([...practices, { date: new Date().toISOString(), endTime: '', title: '新練團', location: '圓頭音樂' }])} className="w-full py-2 border-2 border-dashed border-[#77ABC0] text-[#77ABC0] rounded-xl font-bold flex justify-center items-center gap-1">
           <Plus size={16}/> 增加場次
         </button>
         <div className="flex gap-2 pt-2">
@@ -392,17 +579,21 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
       <div className="bg-gradient-to-br from-[#77ABC0] to-[#6E7F9B] rounded-[32px] p-6 text-white shadow-lg shadow-[#77ABC0]/20 relative overflow-hidden group">
         <div className="relative z-10">
           <div className="flex justify-between items-start mb-1">
-            <h2 className="text-sm font-bold text-[#E0E7EA] uppercase tracking-widest">{nextPractice.title}</h2>
+            <h2 className="text-xl font-black text-[#E0E7EA] uppercase tracking-widest drop-shadow-md">{nextPractice.title}</h2>
             <div className="flex gap-2">
               {role.admin && <button onClick={() => { setPractices(generalData.practices || []); setEditingPractice(true); }} className="bg-white/20 p-2 rounded-full backdrop-blur-sm hover:bg-white/40"><Pencil size={18}/></button>}
               <a href={addToCalendarUrl()} target="_blank" className="bg-white/20 hover:bg-white/30 p-2 rounded-full backdrop-blur-sm transition active:scale-95"><CalendarPlus size={18} className="text-white"/></a>
             </div>
           </div>
-          <div className="text-3xl font-bold mb-1 font-mono tracking-tight">
+          <div className="text-4xl font-black mb-1 font-mono tracking-tight drop-shadow-md">
              {diffDays > 0 ? `倒數 ${diffDays} 天` : diffDays === 0 ? "就是今天！" : "已結束"}
           </div>
-          <div className="text-sm text-[#E0E7EA] font-medium mb-4">{new Date(nextPractice.date).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute:'2-digit' })}</div>
-          <div className="flex items-center gap-2 bg-black/10 w-fit px-3 py-1.5 rounded-full backdrop-blur-sm border border-white/10"><MapPin size={14} className="text-[#E0E7EA]"/><span className="text-xs font-bold">{nextPractice.location}</span></div>
+          <div className="text-lg text-[#E0E7EA] font-bold mb-4 flex items-center gap-2">
+            <Clock size={18}/> 
+            {new Date(nextPractice.date).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute:'2-digit' })}
+            {nextPractice.endTime && ` - ${new Date(nextPractice.endTime).toLocaleTimeString('zh-TW', { hour: '2-digit', minute:'2-digit' })}`}
+          </div>
+          <div className="flex items-center gap-2 bg-black/20 w-fit px-4 py-2 rounded-full backdrop-blur-sm border border-white/10"><MapPin size={16} className="text-[#E0E7EA]"/><span className="text-sm font-bold">{nextPractice.location}</span></div>
         </div>
         <PartyPopper className="absolute -right-4 -bottom-4 text-white opacity-10 rotate-12" size={140} />
       </div>
@@ -418,6 +609,7 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
         </div>
       </div>
 
+      {/* 點名表 */}
       <div>
         <div className="flex items-center justify-between px-1 mb-2">
           <h3 className="font-bold text-xl text-[#725E77]">本月練團點名</h3>
@@ -438,6 +630,7 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
                     <div className="flex items-center gap-1 text-xs text-[#C5B8BF] font-medium"><span className="text-[#77ABC0] font-bold">{m.instrument}</span><span>•</span><span>{m.realName}</span></div>
                   </div>
                 </div>
+                {/* 互動式日期出席按鈕 */}
                 <div className="flex gap-1.5 overflow-x-auto max-w-[120px] scrollbar-hide">
                   {practices.map(p => {
                     const dateStr = p.date.split('T')[0];
@@ -463,7 +656,8 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
                     <div><p className="text-[10px] font-bold text-[#C5B8BF] uppercase mb-0.5">管理者備註</p><p className="text-sm text-[#725E77] font-medium">{m.note}</p></div>
                   </div>
                   <div className="mt-2 flex justify-between items-center text-xs font-bold text-[#8B8C89] px-1">
-                    <span className="flex items-center gap-1"><Calendar size={12}/> 生日: {m.birthday} ({getZodiac(m.birthday)})</span>
+                    {/* 隱私優化：前台只顯示月/日 */}
+                    <span className="flex items-center gap-1"><Calendar size={12}/> 生日: {formatBirthdayDisplay(m.birthday)} ({getZodiac(m.birthday)})</span>
                     {role.admin && (
                       <div className="flex gap-3">
                          <button onClick={(e) => { e.stopPropagation(); setEditingMember(m); }} className="text-[#77ABC0] hover:text-[#50656e] flex items-center gap-1"><Pencil size={12}/> 編輯</button>
@@ -506,16 +700,15 @@ const MemberEditModal = ({ member, onClose, onSave }) => {
 };
 
 // --- 2. 日誌管理器 ---
-const SessionLogManager = ({ sessions, scheduledDates, members, settings, db, role }) => {
+const SessionLogManager = ({ sessions, scheduledDates, members, settings, db, appId, role }) => {
   const [activeSessionId, setActiveSessionId] = useState(null);
   
-  // scheduledDates 現在是 practices 陣列，需要先提取日期
   const practices = scheduledDates || []; 
   const existingSessionDates = sessions.map(s => s.date);
 
   const pendingPractices = practices.filter(p => {
       const pDate = p.date.split('T')[0];
-      return !sessions.some(s => s.date.startsWith(pDate));
+      return !existingDates.includes(pDate);
   }).sort((a,b) => new Date(a.date) - new Date(b.date));
 
   const [showManualCreate, setShowManualCreate] = useState(false);
@@ -532,7 +725,7 @@ const SessionLogManager = ({ sessions, scheduledDates, members, settings, db, ro
         createdAt: serverTimestamp() 
     };
     try {
-      const docRef = await addDoc(collection(db, 'logs'), newSession);
+      const docRef = await addDoc(getCollectionRef(db, 'logs'), newSession);
       setActiveSessionId(docRef.id);
       setShowManualCreate(false);
     } catch(e) { alert("Error: " + e.message); }
@@ -558,7 +751,6 @@ const SessionLogManager = ({ sessions, scheduledDates, members, settings, db, ro
         )}
       </div>
       
-      {/* 待補日誌：根據首頁設定的練團時間自動生成 */}
       {role.admin && pendingPractices.map(p => (
         <button key={p.id} onClick={() => handleCreate(p.date.split('T')[0], p.location)} className="w-full p-4 rounded-[28px] border-2 border-dashed border-[#CBABCA] bg-[#FDFBF7] flex items-center justify-between text-[#CBABCA] hover:bg-[#FFF5F7] transition group">
           <div className="flex items-center gap-3">
@@ -610,7 +802,7 @@ const SessionDetail = ({ session, members, settings, onBack, db, role }) => {
 
   const handleUpdateNotes = async () => {
     if (!db) return;
-    await updateDoc(doc(db, 'logs', session.id), { funNotes });
+    await updateDoc(getDocRef(db, 'logs', session.id), { funNotes });
   };
 
   return (
@@ -646,7 +838,7 @@ const SessionDetail = ({ session, members, settings, onBack, db, role }) => {
   );
 };
 
-// --- TrackList (任何人可編輯內容，但可擴充刪除權限) ---
+// --- TrackList (任何人可編輯內容) ---
 const TrackList = ({ session, db }) => {
   const [expandedTrack, setExpandedTrack] = useState(null);
   const [newTrackName, setNewTrackName] = useState("");
@@ -655,7 +847,7 @@ const TrackList = ({ session, db }) => {
   const handleAddTrack = async () => {
     if (!newTrackName.trim() || !db) return;
     const newTrack = { id: Date.now(), title: newTrackName, status: 'new', link: '', comments: [] };
-    await updateDoc(doc(db, 'logs', session.id), { tracks: [...tracks, newTrack] });
+    await updateDoc(getDocRef(db, 'logs', session.id), { tracks: [...tracks, newTrack] });
     setNewTrackName("");
   };
 
@@ -691,9 +883,7 @@ const TrackList = ({ session, db }) => {
 
 // --- 練團費計算機 (限制: Admin 或 財務) ---
 const PracticeFeeCalculator = ({ session, members, settings, role }) => {
-  // 自動勾選當天有點名的人
-  const defaultAttendees = members.filter(m => m.attendance?.includes(session.date)).map(m => m.id);
-  const [selectedIds, setSelectedIds] = useState(defaultAttendees.length > 0 ? defaultAttendees : members.map(m => m.id));
+  const [selectedIds, setSelectedIds] = useState(members.filter(m => m.attendance?.includes(session.date)).map(m => m.id));
   const [hours, setHours] = useState(2);
   const [hasKB, setHasKB] = useState(true);
   const [bankAccount, setBankAccount] = useState(settings?.studioBankAccount || "");
@@ -714,7 +904,6 @@ const PracticeFeeCalculator = ({ session, members, settings, role }) => {
         <div className="text-3xl font-black text-[#77ABC0] mb-1">${total}</div>
         <div className="text-xs font-bold text-[#6E7F9B]">每人 <span className="text-lg text-[#725E77]">${perPerson}</span></div>
       </div>
-      {/* 權限控制：只有 Admin 或 財務大臣 能編輯 */}
       {role.finance ? (
         <div className="space-y-3">
           <div className="flex gap-2">
@@ -923,6 +1112,112 @@ const TechView = ({ songs, db }) => {
             </div>
           </a>
         ))}
+      </div>
+    </div>
+  );
+};
+
+// --- 6. Admin Dashboard (後台管理) ---
+const AdminDashboard = ({ members, logs, db }) => {
+  const [tab, setTab] = useState('members');
+  const [filterStart, setFilterStart] = useState('');
+  const [filterEnd, setFilterEnd] = useState('');
+
+  const handleExport = () => {
+    const dataToExport = tab === 'members' ? members : logs;
+    const filteredData = dataToExport.filter(item => {
+       if (tab === 'logs' && filterStart && filterEnd) {
+         return item.date >= filterStart && item.date <= filterEnd;
+       }
+       return true;
+    });
+
+    const formattedData = filteredData.map(item => {
+      if (tab === 'members') {
+        return {
+          暱稱: item.nickname,
+          本名: item.realName,
+          樂器: item.instrument,
+          生日: item.birthday,
+          Email: item.email || '未設定',
+          備註: item.note
+        };
+      } else {
+        return {
+          日期: item.date,
+          地點: item.location,
+          曲目數: item.tracks?.length || 0,
+          備註: item.funNotes
+        };
+      }
+    });
+
+    exportToCSV(formattedData, `Band_${tab}_export_${new Date().toISOString().slice(0,10)}.csv`);
+  };
+
+  const handleDelete = async (collectionName, id) => {
+    if (confirm("⚠️ 警告：這將永久刪除此筆資料！確定嗎？")) {
+      await deleteDoc(getDocRef(db, collectionName, id));
+    }
+  };
+
+  return (
+    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 pb-20">
+      <div className="bg-white p-5 rounded-[32px] border border-[#E0E0D9] shadow-sm">
+        <h2 className="text-xl font-black text-[#725E77] flex items-center gap-2 mb-4">
+          <Database size={24}/> 後台管理系統
+        </h2>
+        
+        <div className="flex gap-2 mb-4 overflow-x-auto pb-1">
+          <button onClick={() => setTab('members')} className={`px-4 py-2 rounded-xl text-xs font-bold transition ${tab === 'members' ? 'bg-[#77ABC0] text-white' : 'bg-[#F0F4F5] text-[#77ABC0]'}`}>成員名單</button>
+          <button onClick={() => setTab('logs')} className={`px-4 py-2 rounded-xl text-xs font-bold transition ${tab === 'logs' ? 'bg-[#77ABC0] text-white' : 'bg-[#F0F4F5] text-[#77ABC0]'}`}>練團紀錄</button>
+        </div>
+
+        {tab === 'logs' && (
+          <div className="bg-[#FDFBF7] p-3 rounded-xl border border-[#E0E0D9] mb-4 space-y-2">
+            <div className="text-[10px] font-bold text-[#C5B8BF] uppercase flex items-center gap-1"><Filter size={10}/> 日期篩選</div>
+            <div className="flex gap-2">
+              <input type="date" className="w-full p-2 rounded-lg text-xs bg-white border border-[#E0E0D9]" value={filterStart} onChange={e=>setFilterStart(e.target.value)} />
+              <span className="text-[#C5B8BF] self-center">~</span>
+              <input type="date" className="w-full p-2 rounded-lg text-xs bg-white border border-[#E0E0D9]" value={filterEnd} onChange={e=>setFilterEnd(e.target.value)} />
+            </div>
+          </div>
+        )}
+
+        <button onClick={handleExport} className="w-full py-3 bg-[#E8F1E9] text-[#5F7A61] rounded-xl text-xs font-bold flex items-center justify-center gap-2 border border-[#CFE3D1] hover:bg-[#CFE3D1] transition">
+          <Download size={16}/> 匯出報表 (CSV)
+        </button>
+      </div>
+
+      <div className="bg-white rounded-[24px] border border-[#E0E0D9] overflow-hidden">
+        <table className="w-full text-left text-xs">
+          <thead className="bg-[#F0F4F5] text-[#77ABC0]">
+            <tr>
+              <th className="p-3 font-bold">{tab === 'members' ? '暱稱/本名' : '日期/地點'}</th>
+              <th className="p-3 font-bold text-right">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(tab === 'members' ? members : logs).map((item, idx) => (
+              <tr key={item.id} className="border-t border-[#FDFBF7] hover:bg-[#F9F9F9]">
+                <td className="p-3">
+                  <div className="font-bold text-[#725E77]">{tab === 'members' ? item.nickname : item.date}</div>
+                  <div className="text-[10px] text-[#C5B8BF]">
+                     {tab === 'members' ? `${item.realName} (${item.birthday || '無生日'})` : item.location}
+                  </div>
+                </td>
+                <td className="p-3 text-right">
+                  <button onClick={() => handleDelete(tab === 'members' ? 'members' : 'logs', item.id)} className="p-2 bg-[#F2D7DD]/50 text-[#BC8F8F] rounded-lg hover:bg-[#BC8F8F] hover:text-white transition">
+                    <Trash2 size={14}/>
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {(tab === 'members' ? members : logs).length === 0 && (
+              <tr><td colSpan="2" className="p-4 text-center text-[#C5B8BF]">無資料</td></tr>
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );
