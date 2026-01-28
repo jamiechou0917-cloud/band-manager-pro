@@ -18,24 +18,24 @@ import {
 // 🔐 權限管理區 (請在此設定)
 // ==========================================
 
-// 1. 團員白名單 (只有這些 Email 可以登入使用)
+// 1. 團員白名單
 const MEMBER_EMAILS = [
   "jamie.chou0917@gmail.com", 
   "drummer@gmail.com",
-  "demo@test.com",
   "bass@gmail.com",
-  "keyboard@gmail.com"
+  "keyboard@gmail.com",
+  "demo@test.com"
 ];
 
-// 2. 超級管理員 (擁有後台、編輯全團資料權限)
+// 2. 超級管理員
 const ADMIN_EMAILS = [
   "jamie.chou0917@gmail.com",
   "demo@test.com"
 ];
 
-// 3. 特殊職位名稱 (需與團員名單中的本名/暱稱一致)
-const ROLE_FINANCE_NAME = "陳昱維"; // 財務大臣
-const ROLE_ALCOHOL_NAME = "李家賢"; // 酒水總管
+// 3. 特殊職位名稱
+const ROLE_FINANCE_NAME = "陳昱維"; 
+const ROLE_ALCOHOL_NAME = "李家賢"; 
 
 // --- 🎸 樂團專屬設定 ---
 const BAND_LOGO_BASE64 = ""; 
@@ -148,12 +148,8 @@ const getZodiac = (dateStr) => {
   return (z[idx]?.n || "") + "座";
 };
 
-// ==========================================
-// 🔥🔥🔥 Firebase 初始化 (正式環境模式) 🔥🔥🔥
-// ==========================================
-
-// 1. 您的真實設定
-const firebaseConfig = {
+// --- Firebase Config ---
+const USER_CONFIG = {
   apiKey: "AIzaSyDb36ftpgHzZEH2IuYOsPmJEiKgeVhLWKk",
   authDomain: "bandmanager-a3049.firebaseapp.com",
   projectId: "bandmanager-a3049",
@@ -161,14 +157,33 @@ const firebaseConfig = {
   messagingSenderId: "193559225053",
   appId: "1:193559225053:web:124fd5a7ab3cf1a854f134"
 };
+const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : USER_CONFIG;
+const IS_CANVAS = typeof __firebase_config !== 'undefined';
+const storageAppId = IS_CANVAS ? (typeof __app_id !== 'undefined' ? __app_id : 'band-manager-preview') : null;
 
-// 2. 初始化 Firebase (不再使用預覽環境變數，強制使用真實設定)
+// --- 關鍵修正：更新 getCollectionRef 和 getDocRef 以接受 db 參數 ---
+const getCollectionRef = (db, name) => {
+  if (IS_CANVAS && storageAppId) {
+    return collection(db, 'artifacts', storageAppId, 'public', 'data', name);
+  }
+  return collection(db, name);
+};
+
+const getDocRef = (db, name, id) => {
+  if (IS_CANVAS && storageAppId) {
+    return doc(db, 'artifacts', storageAppId, 'public', 'data', name, id);
+  }
+  return doc(db, name, id);
+};
+
 let auth, googleProvider, db;
 try {
-  const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
-  auth = getAuth(app);
-  db = getFirestore(app);
-  googleProvider = new GoogleAuthProvider();
+  if (firebaseConfig) {
+    const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+    auth = getAuth(app);
+    db = getFirestore(app);
+    googleProvider = new GoogleAuthProvider();
+  }
 } catch (e) { console.error("Firebase init error:", e); }
 
 // --- 預設資料 ---
@@ -203,7 +218,7 @@ const App = () => {
       const unsubAuth = onAuthStateChanged(auth, async (u) => {
         if (u) {
           // --- 白名單檢查 ---
-          if (!MEMBER_EMAILS.includes(u.email)) {
+          if (!IS_CANVAS && !MEMBER_EMAILS.includes(u.email)) {
             alert(`⛔ 抱歉，您的 Email (${u.email}) 不在團員名單中，無法存取本系統。\n請聯繫團長加入名單。`);
             await signOut(auth);
             setUser(null); setLoading(false); return;
@@ -211,8 +226,13 @@ const App = () => {
           setUser(u); setLoading(false);
         } else {
           setUser(null); setLoading(false);
+          // 移除自動登入，僅保留預覽環境的方便性
+          if (IS_CANVAS) setTimeout(() => setUser({ uid: 'demo', displayName: '體驗帳號', photoURL: null, email: 'demo@test.com' }), 1000);
         }
       });
+      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+        signInWithCustomToken(auth, __initial_auth_token).catch(e => console.error(e));
+      }
       return () => unsubAuth();
     } else {
       setLoading(false);
@@ -224,33 +244,39 @@ const App = () => {
     if (user) {
       const userEmail = user.email;
       const isAdmin = ADMIN_EMAILS.includes(userEmail);
+      
       const financeMember = members.find(m => m.realName === ROLE_FINANCE_NAME || m.nickname === ROLE_FINANCE_NAME);
       const isFinance = isAdmin || (financeMember && financeMember.email === userEmail);
+      
       const alcoholMember = members.find(m => m.realName === ROLE_ALCOHOL_NAME || m.nickname === ROLE_ALCOHOL_NAME);
       const isAlcohol = isAdmin || (alcoholMember && alcoholMember.email === userEmail);
+
       setRole({ admin: isAdmin, finance: isFinance, alcohol: isAlcohol });
     } else {
       setRole({ admin: false, finance: false, alcohol: false });
     }
   }, [user, members]);
 
-  // Firestore 資料監聽 (直接使用根目錄)
+  // Firestore 資料監聽
   useEffect(() => {
     if (!db || !user) return;
 
-    // 這裡使用標準路徑，不再加上 artifacts 前綴
-    const unsubMembers = onSnapshot(collection(db, 'members'), (snap) => setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() }))), (e) => console.warn(e));
-    const unsubLogs = onSnapshot(collection(db, 'logs'), (snap) => setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => new Date(b.date) - new Date(a.date))));
-    const unsubAlcohol = onSnapshot(collection(db, 'alcohol'), (snap) => setAlcohols(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-    const unsubSongs = onSnapshot(collection(db, 'songs'), (snap) => setSongs(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-    const unsubGeneral = onSnapshot(doc(db, 'general', 'info'), (docSnap) => {
+    // 使用 helper 函式 (已修正為接受 db 參數)
+    const unsubMembers = onSnapshot(getCollectionRef(db, 'members'), (snap) => setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() }))), 
+      (err) => { if (err.code === 'permission-denied') console.warn("Permission denied. Check Firestore Rules."); });
+    
+    const unsubLogs = onSnapshot(getCollectionRef(db, 'logs'), (snap) => setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => new Date(b.date) - new Date(a.date))));
+    const unsubAlcohol = onSnapshot(getCollectionRef(db, 'alcohol'), (snap) => setAlcohols(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const unsubSongs = onSnapshot(getCollectionRef(db, 'songs'), (snap) => setSongs(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    
+    const unsubGeneral = onSnapshot(getDocRef(db, 'general', 'info'), (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
         if (data.nextPractice && !data.practices) data.practices = [data.nextPractice]; 
         setGeneralData(data);
       } else {
-        setDoc(doc(db, 'general', 'info'), DEFAULT_GENERAL_DATA);
-        setGeneralData(DEFAULT_GENERAL_DATA);
+        setDoc(getDocRef(db, 'general', 'info'), DEFAULT_GENERAL_DATA);
+        setGeneralData(DEFAULT_GENERAL_DATA); // 立即設置，避免閃爍
       }
     });
 
@@ -305,7 +331,7 @@ const App = () => {
            </button>
            <div className="mt-6 p-3 bg-indigo-50 rounded-xl text-xs text-indigo-800 text-left border border-indigo-100">
              <div className="flex items-center gap-1 font-bold mb-1"><Lock size={12}/> 存取限制</div>
-             本系統僅限受邀團員登入。若無法進入，請聯繫管理員加入白名單。
+             請使用手機 Chrome 或 Safari 開啟以確保登入順利。
            </div>
         </div>
       </div>
@@ -390,7 +416,7 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
 
   const handleUpdatePractices = async () => {
     if (!db) return;
-    await updateDoc(doc(db, 'general', 'info'), { practices: practices });
+    await updateDoc(getDocRef(db, 'general', 'info'), { practices: practices });
     setEditingPractice(false);
   };
 
@@ -406,22 +432,22 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
     } else {
       newAttendance = [...currentAttendance, dateStr];
     }
-    await updateDoc(doc(db, 'members', memberId), { attendance: newAttendance });
+    await updateDoc(getDocRef(db, 'members', memberId), { attendance: newAttendance });
   };
 
   const handleSaveMember = async (memberData) => {
     if (!db) return;
     if (memberData.id) {
-      await updateDoc(doc(db, 'members', memberData.id), memberData);
+      await updateDoc(getDocRef(db, 'members', memberData.id), memberData);
     } else {
-      await addDoc(collection(db, 'members'), memberData);
+      await addDoc(getCollectionRef(db, 'members'), memberData);
     }
     setEditingMember(null);
   };
 
   const handleDeleteMember = async (id) => {
     if (confirm("確定要刪除這位團員嗎？")) {
-       await deleteDoc(doc(db, 'members', id));
+       await deleteDoc(getDocRef(db, 'members', id));
     }
   };
 
@@ -624,8 +650,7 @@ const SessionLogManager = ({ sessions, scheduledDates, members, settings, db, ap
         createdAt: serverTimestamp() 
     };
     try {
-      // 修正為使用根目錄集合 'logs'
-      const docRef = await addDoc(collection(db, 'logs'), newSession);
+      const docRef = await addDoc(getCollectionRef(db, 'logs'), newSession);
       setActiveSessionId(docRef.id);
       setShowManualCreate(false);
     } catch(e) { alert("Error: " + e.message); }
@@ -704,12 +729,12 @@ const SessionDetail = ({ session, members, settings, onBack, db, role }) => {
 
   const handleUpdateNotes = async () => {
     if (!db) return;
-    await updateDoc(doc(db, 'logs', session.id), { funNotes });
+    await updateDoc(getDocRef(db, 'logs', session.id), { funNotes });
   };
 
   const handleUpdateLocation = async () => {
      if (!db) return;
-     await updateDoc(doc(db, 'logs', session.id), { location });
+     await updateDoc(getDocRef(db, 'logs', session.id), { location });
      setEditingLocation(false);
   };
 
@@ -771,7 +796,7 @@ const TrackList = ({ session, db }) => {
   const handleAddTrack = async () => {
     if (!newTrackName.trim() || !db) return;
     const newTrack = { id: Date.now(), title: newTrackName, status: 'new', link: '', comments: [] };
-    await updateDoc(doc(db, 'logs', session.id), { tracks: [...tracks, newTrack] });
+    await updateDoc(getDocRef(db, 'logs', session.id), { tracks: [...tracks, newTrack] });
     setNewTrackName("");
   };
 
@@ -786,7 +811,7 @@ const TrackList = ({ session, db }) => {
       }
       return t;
     });
-    await updateDoc(doc(db, 'logs', session.id), { tracks: updatedTracks });
+    await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks });
     setNewComment("");
   };
 
@@ -943,7 +968,7 @@ const MiscFeeCalculator = ({ session, members, settings }) => {
         ))}
       </div>
 
-      <button onClick={copyText} className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition ${copied ? 'bg-[#8DA399] text-white' : 'bg-[#CBABCA] text-white'}`}>{copied ? <Check size={16}/> : <Copy size={16}/>} 複製請款文</button>
+      <button onClick={copyText} className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition ${copied ? 'bg-[#8DA399] text-white' : 'bg-[#CBABCA] text-white'}`}>{copied ? <Check size={16}/> : <Copy size={16}/>} 複製雜支明細</button>
     </div>
   );
 };
@@ -956,7 +981,7 @@ const AlcoholManager = ({ alcohols, members, settings, db, appId, role }) => {
 
   const handleAdd = async () => {
     if (!newAlcohol.name) return;
-    await addDoc(collection(db, 'alcohol'), newAlcohol);
+    await addDoc(getCollectionRef(db, 'alcohol'), newAlcohol);
     setShowAdd(false);
     setNewAlcohol({ name: '', type: 'Whiskey', level: 100, rating: 5, note: '' });
   };
@@ -1061,7 +1086,7 @@ const TechView = ({ songs, db, role, user }) => {
 
   const handleAdd = async () => {
     if (!newSong.title || !db) return;
-    await addDoc(collection(db, 'songs'), { ...newSong, user: user.displayName });
+    await addDoc(getCollectionRef(db, 'songs'), { ...newSong, user: user.displayName });
     setShowAdd(false);
     setNewSong({ title: '', artist: '', link: '', type: 'cover' });
   };
@@ -1150,7 +1175,7 @@ const AdminDashboard = ({ members, logs, db }) => {
 
   const handleDelete = async (collectionName, id) => {
     if (confirm("⚠️ 警告：這將永久刪除此筆資料！確定嗎？")) {
-      await deleteDoc(doc(db, collectionName, id));
+      await deleteDoc(getDocRef(db, collectionName, id));
     }
   };
 
