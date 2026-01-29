@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signInWithCustomToken, signOut, signInWithRedirect, getRedirectResult } from 'firebase/auth';
 import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, setDoc, serverTimestamp } from 'firebase/firestore';
@@ -41,7 +41,7 @@ class ErrorBoundary extends React.Component {
 // 🔐 設定與常數
 // ==========================================
 
-// 1. 超級管理員 (最後的救援鑰匙)
+// 1. 超級管理員
 const ADMIN_EMAILS = [
   "jamie.chou0917@gmail.com",
   "demo@test.com"
@@ -67,6 +67,31 @@ const stringToColor = (str) => {
     hash = str.charCodeAt(i) + ((hash << 5) - hash);
   }
   return MORANDI_COLORS[Math.abs(hash) % MORANDI_COLORS.length];
+};
+
+// 🎨 內建 SVG 動物頭像元件 (不依賴外部 Icon，防止崩潰)
+const SvgAvatar = ({ name, color }) => {
+  if (!name) return <div className="w-12 h-12 rounded-2xl bg-slate-200" />;
+  
+  // 根據名字決定動物類型
+  const hash = name.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  const type = Math.abs(hash) % 3; // 0: 貓, 1: 熊, 2: 兔
+
+  return (
+    <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white border-2 border-white shadow-sm overflow-hidden" style={{backgroundColor: color}}>
+      <svg viewBox="0 0 24 24" className="w-8 h-8" fill="currentColor">
+        {type === 0 && ( // 貓
+           <path d="M12 2C8 2 4 5 4 9c0 4.4 3.6 8 8 8s8-3.6 8-8c0-4-4-7-8-7z M6 4L4 8h4L6 4zm12 0l2 4h-4l2-4z"/>
+        )}
+        {type === 1 && ( // 熊
+           <g><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="13" r="8"/></g>
+        )}
+        {type === 2 && ( // 兔
+           <g><ellipse cx="12" cy="14" rx="7" ry="6"/><ellipse cx="9" cy="6" rx="2" ry="5"/><ellipse cx="15" cy="6" rx="2" ry="5"/></g>
+        )}
+      </svg>
+    </div>
+  );
 };
 
 const BandLogo = () => (
@@ -204,12 +229,11 @@ const App = () => {
     if (user) {
       // 正規化：轉小寫並去除空白
       const normalize = (str) => (str || '').trim().toLowerCase();
-      
       const userEmail = normalize(user.email);
       const adminEmails = ADMIN_EMAILS.map(normalize);
       const isAdmin = adminEmails.includes(userEmail);
       
-      // 白名單檢查：只有當成員名單已載入且不是管理員時才檢查
+      // 白名單檢查
       if (!IS_CANVAS && !isAdmin && members.length > 0) {
          const isMember = members.some(m => normalize(m.email) === userEmail);
          if (!isMember) {
@@ -290,7 +314,8 @@ const App = () => {
   };
 
   if (loading && !generalData) return <div className="h-screen flex justify-center items-center bg-[#FDFBF7]"><Loader2 className="animate-spin text-[#77ABC0]"/></div>;
-  const showImage = !imgError && BAND_LOGO_BASE64;
+  const logoSrc = BAND_LOGO_BASE64 || BAND_LOGO_URL;
+  const showImage = logoSrc && !imgError;
   const handlePrankClick = (e) => { const btn = e.currentTarget; btn.style.transform = 'rotate(360deg) scale(1.2)'; setTimeout(() => { setShowPrankModal(true); btn.style.transform = 'rotate(0deg) scale(1)'; }, 300); };
 
   if (!user) return (
@@ -379,16 +404,22 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
   const toggleAttendance = async (memberId, dateStr) => {
     const member = members.find(m => m.id === memberId);
     if (!member) return;
-    const canEdit = role.admin || (user.email && member.email === user.email);
-    if (!canEdit) { alert("只能修改自己的出席狀態喔！"); return; }
-    const currentAttendance = member.attendance || [];
-    let newAttendance;
-    if (currentAttendance.includes(dateStr)) {
-      newAttendance = currentAttendance.filter(d => d !== dateStr);
-    } else {
-      newAttendance = [...currentAttendance, dateStr];
+    
+    // Normalize emails
+    const currentUserEmail = (user.email || '').trim().toLowerCase();
+    const memberEmail = (member.email || '').trim().toLowerCase();
+    
+    const isSelf = currentUserEmail && memberEmail && currentUserEmail === memberEmail;
+    const canEdit = role.admin || isSelf;
+
+    if (!canEdit) { 
+        alert(`只能修改自己的出席狀態喔！\n\n您的帳號: ${user.email}\n此欄位帳號: ${member.email || "未設定"}`); 
+        return; 
     }
-    await updateDoc(getDocRef(db, 'members', memberId), { attendance: newAttendance });
+
+    const current = member.attendance || [];
+    const newAtt = current.includes(dateStr) ? current.filter(d => d !== dateStr) : [...current, dateStr];
+    await updateDoc(getDocRef(db, 'members', memberId), { attendance: newAtt });
   };
   
   const handleSaveMember = async (data) => { if (!db) return; data.id ? await updateDoc(getDocRef(db, 'members', data.id), data) : await addDoc(getCollectionRef(db, 'members'), data); setEditingMember(null); };
@@ -485,13 +516,12 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
         <div className="grid grid-cols-1 gap-3">
           {members.map(m => {
             const style = getMemberStyle(m.nickname || m.realName);
-            const Icon = style.Icon;
             return (
             <div key={m.id} onClick={() => setExpandedMember(expandedMember === m.id ? null : m.id)} className={`bg-white p-4 rounded-2xl border shadow-sm transition-all cursor-pointer ${expandedMember === m.id ? 'border-[#CBABCA] ring-1 ring-[#CBABCA]/30' : 'border-[#E0E0D9]'}`}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white font-bold text-lg border-2 border-white shadow-sm overflow-hidden" style={{backgroundColor: style.color}}>
-                    {m.avatarUrl ? <img src={m.avatarUrl} alt="U" className="w-full h-full object-cover"/> : (m.nickname?.[0] || 'M')}
+                    <SvgAvatar name={m.nickname || m.realName} color={style.color} />
                   </div>
                   <div>
                     <div className="flex items-center gap-2"><span className="font-bold text-[#725E77] text-lg">{m.nickname}</span>{m.birthday && new Date().getMonth()+1 === parseInt(m.birthday.split('-')[1]) && <span className="bg-[#BC8F8F] text-white text-[10px] px-2 py-0.5 rounded-full font-bold flex items-center gap-1"><Cake size={10} /> 壽星</span>}</div>
