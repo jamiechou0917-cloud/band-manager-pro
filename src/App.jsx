@@ -41,22 +41,16 @@ class ErrorBoundary extends React.Component {
 // 🔐 設定與常數
 // ==========================================
 
-// 1. 超級管理員
 const ADMIN_EMAILS = [
   "jamie.chou0917@gmail.com",
   "demo@test.com"
 ];
 
-// 2. 特殊職位
 const ROLE_FINANCE_NAME = "陳昱維"; 
 const ROLE_ALCOHOL_NAME = "李家賢"; 
-
-// --- 🎸 樂團專屬設定 ---
 const BAND_NAME = "不開玩笑";
 const BAND_LOGO_BASE64 = ""; 
 const BAND_LOGO_URL = ""; 
-
-// --- 🎨 莫蘭迪色調 ---
 const MORANDI_COLORS = ['#8C736F', '#AAB8AB', '#B7B7BD', '#CCD2CC', '#9F8D8B', '#8FA39A'];
 
 // 工具: 生成名字對應顏色
@@ -69,29 +63,12 @@ const stringToColor = (str) => {
   return MORANDI_COLORS[Math.abs(hash) % MORANDI_COLORS.length];
 };
 
-// 🎨 內建 SVG 動物頭像元件 (不依賴外部 Icon，防止崩潰)
-const SvgAvatar = ({ name, color }) => {
-  if (!name) return <div className="w-12 h-12 rounded-2xl bg-slate-200" />;
-  
-  // 根據名字決定動物類型
-  const hash = name.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-  const type = Math.abs(hash) % 3; // 0: 貓, 1: 熊, 2: 兔
-
-  return (
-    <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white border-2 border-white shadow-sm overflow-hidden" style={{backgroundColor: color}}>
-      <svg viewBox="0 0 24 24" className="w-8 h-8" fill="currentColor">
-        {type === 0 && ( // 貓
-           <path d="M12 2C8 2 4 5 4 9c0 4.4 3.6 8 8 8s8-3.6 8-8c0-4-4-7-8-7z M6 4L4 8h4L6 4zm12 0l2 4h-4l2-4z"/>
-        )}
-        {type === 1 && ( // 熊
-           <g><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="13" r="8"/></g>
-        )}
-        {type === 2 && ( // 兔
-           <g><ellipse cx="12" cy="14" rx="7" ry="6"/><ellipse cx="9" cy="6" rx="2" ry="5"/><ellipse cx="15" cy="6" rx="2" ry="5"/></g>
-        )}
-      </svg>
-    </div>
-  );
+// 修正 1: 確保 getMemberStyle 函式定義正確且在全域可存取
+const getMemberStyle = (name) => {
+    return { 
+        color: stringToColor(name), 
+        Icon: User 
+    };
 };
 
 const BandLogo = () => (
@@ -204,6 +181,7 @@ const App = () => {
   const [role, setRole] = useState({ admin: false, finance: false, alcohol: false });
 
   const [members, setMembers] = useState([]);
+  const [membersLoaded, setMembersLoaded] = useState(false); // 修正 4: 新增狀態來追蹤成員載入
   const [logs, setLogs] = useState([]);
   const [alcohols, setAlcohols] = useState([]);
   const [songs, setSongs] = useState([]);
@@ -224,39 +202,40 @@ const App = () => {
     } else { setLoading(false); }
   }, []);
 
-  // 權限與白名單檢查 (修正：正規化 Email)
+  // 權限與白名單檢查 (修正：確保成員名單載入後才判斷)
   useEffect(() => {
-    if (user) {
-      // 正規化：轉小寫並去除空白
-      const normalize = (str) => (str || '').trim().toLowerCase();
-      const userEmail = normalize(user.email);
-      const adminEmails = ADMIN_EMAILS.map(normalize);
-      const isAdmin = adminEmails.includes(userEmail);
-      
-      // 白名單檢查
-      if (!IS_CANVAS && !isAdmin && members.length > 0) {
-         const isMember = members.some(m => normalize(m.email) === userEmail);
-         if (!isMember) {
-            alert(`⛔ 抱歉，您的 Email (${user.email}) 不在團員名單中。\n請聯繫團長將您的 Email 加入成員名單。`);
-            signOut(auth).then(() => setUser(null));
-            return;
-         }
-      }
+    if (user && membersLoaded) { // 修正 4: 檢查 membersLoaded
+       const normalize = (str) => (str || '').trim().toLowerCase();
+       const userEmail = normalize(user.email);
+       const adminEmails = ADMIN_EMAILS.map(normalize);
+       const isAdmin = adminEmails.includes(userEmail);
+       
+       // 白名單檢查
+       if (!IS_CANVAS && !isAdmin && members.length > 0) {
+          const isMember = members.some(m => normalize(m.email) === userEmail);
+          if (!isMember) {
+             alert(`⛔ 抱歉，您的 Email (${user.email}) 不在團員名單中。\n請聯繫團長將您的 Email 加入成員名單。`);
+             signOut(auth).then(() => setUser(null));
+             return;
+          }
+       }
 
-      // 職位權限分配
-      const financeMember = members.find(m => m.realName === ROLE_FINANCE_NAME || m.nickname === ROLE_FINANCE_NAME);
-      const isFinance = isAdmin || (financeMember && normalize(financeMember.email) === userEmail);
-      
-      const alcoholMember = members.find(m => m.realName === ROLE_ALCOHOL_NAME || m.nickname === ROLE_ALCOHOL_NAME);
-      const isAlcohol = isAdmin || (alcoholMember && normalize(alcoholMember.email) === userEmail);
+       // 職位權限分配
+       const financeMember = members.find(m => m.realName === ROLE_FINANCE_NAME || m.nickname === ROLE_FINANCE_NAME);
+       const isFinance = isAdmin || (financeMember && normalize(financeMember.email) === userEmail);
+       
+       const alcoholMember = members.find(m => m.realName === ROLE_ALCOHOL_NAME || m.nickname === ROLE_ALCOHOL_NAME);
+       const isAlcohol = isAdmin || (alcoholMember && normalize(alcoholMember.email) === userEmail);
 
-      setRole({ admin: isAdmin, finance: isFinance, alcohol: isAlcohol });
-      setLoading(false);
+       setRole({ admin: isAdmin, finance: isFinance, alcohol: isAlcohol });
+       setLoading(false);
+    } else if (user && !membersLoaded) {
+       // 等待資料載入中...
     } else {
-      setRole({ admin: false, finance: false, alcohol: false });
-      if (!IS_CANVAS) setLoading(false);
+       setRole({ admin: false, finance: false, alcohol: false });
+       if (!IS_CANVAS) setLoading(false);
     }
-  }, [user, members]);
+  }, [user, members, membersLoaded]);
 
   // Firestore 資料監聽
   useEffect(() => {
@@ -266,7 +245,11 @@ const App = () => {
     }, 2500);
 
     if (!db || !user) return;
-    const unsubMembers = onSnapshot(getCollectionRef(db, 'members'), (snap) => setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() }))), (e) => console.warn(e));
+    const unsubMembers = onSnapshot(getCollectionRef(db, 'members'), (snap) => {
+        setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        setMembersLoaded(true); // 修正 4: 標記載入完成
+    }, (e) => console.warn(e));
+    
     const unsubLogs = onSnapshot(getCollectionRef(db, 'logs'), (snap) => setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => new Date(b.date) - new Date(a.date))));
     const unsubAlcohol = onSnapshot(getCollectionRef(db, 'alcohol'), (snap) => setAlcohols(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubSongs = onSnapshot(getCollectionRef(db, 'songs'), (snap) => setSongs(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
@@ -381,7 +364,13 @@ const NavBtn = ({ id, icon: Icon, label, active, set }) => (
 // --- 1. Dashboard ---
 const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) => {
   const [editingPractice, setEditingPractice] = useState(false);
+  
+  // 修正 2: 狀態同步
   const [practices, setPractices] = useState(generalData.practices || []);
+  useEffect(() => {
+     if(generalData.practices) setPractices(generalData.practices);
+  }, [generalData]);
+
   const [expandedMember, setExpandedMember] = useState(null);
   const [editingMember, setEditingMember] = useState(null); 
   
@@ -399,7 +388,12 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
   const isValidDate = !isNaN(nextDateObj.getTime());
   const diffDays = isValidDate ? Math.ceil((nextDateObj - now) / (1000 * 60 * 60 * 24)) : 0; 
 
-  const handleUpdatePractices = async () => { if (!db) return; await updateDoc(getDocRef(db, 'general', 'info'), { practices }); setEditingPractice(false); };
+  // 修正：儲存時才更新 Firebase
+  const handleUpdatePractices = async (newPractices) => { 
+    if (!db) return; 
+    await updateDoc(getDocRef(db, 'general', 'info'), { practices: newPractices }); 
+    setEditingPractice(false); 
+  };
   
   const toggleAttendance = async (memberId, dateStr) => {
     const member = members.find(m => m.id === memberId);
@@ -425,6 +419,7 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
   const handleSaveMember = async (data) => { if (!db) return; data.id ? await updateDoc(getDocRef(db, 'members', data.id), data) : await addDoc(getCollectionRef(db, 'members'), data); setEditingMember(null); };
   const handleDeleteMember = async (id) => { if (confirm("確定要刪除這位團員嗎？")) { await deleteDoc(getDocRef(db, 'members', id)); } };
   
+  // 修正 3: URL 語法
   const addToCalendarUrl = () => {
     if (!isValidDate) return "#";
     const start = nextDateObj.toISOString().replace(/-|:|\.\d\d\d/g, "");
@@ -432,39 +427,9 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
     return `https://www.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(nextPractice.title)}&dates=${start}/${end}&location=${encodeURIComponent(nextPractice.location)}`;
   };
 
-  const renderPracticeEditor = () => (
-    <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
-      <div className="bg-white p-6 rounded-3xl w-full max-w-sm space-y-4 max-h-[80vh] overflow-y-auto">
-        <h3 className="font-bold text-lg text-[#725E77]">設定本月練團時間</h3>
-        <p className="text-xs text-slate-400">請一次規劃好本月的場次，日誌會自動連動。</p>
-        {practices.map((p, idx) => (
-          <div key={idx} className="bg-[#FDFBF7] p-3 rounded-xl border border-[#E0E0D9] space-y-2 relative">
-             <button onClick={() => setPractices(practices.filter((_, i) => i !== idx))} className="absolute top-2 right-2 text-[#BC8F8F]"><MinusCircle size={16}/></button>
-             <div className="text-xs text-[#C5B8BF] font-bold">開始</div>
-             <input type="datetime-local" className="w-full bg-white p-2 rounded-lg text-sm" value={p.date} onChange={e => {
-               const newP = [...practices]; newP[idx].date = e.target.value; setPractices(newP);
-             }} />
-             <div className="text-xs text-[#C5B8BF] font-bold">結束</div>
-             <input type="datetime-local" className="w-full bg-white p-2 rounded-lg text-sm" value={p.endTime || ''} onChange={e => {
-               const newP = [...practices]; newP[idx].endTime = e.target.value; setPractices(newP);
-             }} />
-             <input type="text" className="w-full bg-white p-2 rounded-lg text-sm" placeholder="標題 (例: 2月第一練)" value={p.title} onChange={e => {
-               const newP = [...practices]; newP[idx].title = e.target.value; setPractices(newP);
-             }} />
-             <input type="text" className="w-full bg-white p-2 rounded-lg text-sm" placeholder="地點" value={p.location} onChange={e => {
-               const newP = [...practices]; newP[idx].location = e.target.value; setPractices(newP);
-             }} />
-          </div>
-        ))}
-        <button onClick={() => setPractices([...practices, { date: new Date().toISOString(), endTime: '', title: '新練團', location: '圓頭音樂' }])} className="w-full py-2 border-2 border-dashed border-[#77ABC0] text-[#77ABC0] rounded-xl font-bold flex justify-center items-center gap-1"><Plus size={16}/> 增加場次</button>
-        <div className="flex gap-2 pt-2"><button onClick={() => setEditingPractice(false)} className="flex-1 p-3 rounded-xl text-slate-400 font-bold">取消</button><button onClick={handleUpdatePractices} className="flex-1 p-3 rounded-xl bg-[#77ABC0] text-white font-bold shadow-lg">儲存設定</button></div>
-      </div>
-    </div>
-  );
-
   return (
     <div className="space-y-5 animate-in fade-in slide-in-from-bottom-4">
-      {editingPractice && renderPracticeEditor()}
+      {editingPractice && <PracticeEditor initialPractices={practices} onClose={()=>setEditingPractice(false)} onSave={handleUpdatePractices} />}
       {editingMember && <MemberEditModal member={editingMember} onClose={() => setEditingMember(null)} onSave={handleSaveMember} />}
 
       <div className="bg-gradient-to-br from-[#77ABC0] to-[#6E7F9B] rounded-[32px] p-6 text-white shadow-lg shadow-[#77ABC0]/20 relative overflow-hidden group">
@@ -520,8 +485,9 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
             <div key={m.id} onClick={() => setExpandedMember(expandedMember === m.id ? null : m.id)} className={`bg-white p-4 rounded-2xl border shadow-sm transition-all cursor-pointer ${expandedMember === m.id ? 'border-[#CBABCA] ring-1 ring-[#CBABCA]/30' : 'border-[#E0E0D9]'}`}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
+                  {/* 修正 1: 頭像改回文字縮寫 */}
                   <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white font-bold text-lg border-2 border-white shadow-sm overflow-hidden" style={{backgroundColor: style.color}}>
-                    <SvgAvatar name={m.nickname || m.realName} color={style.color} />
+                    {m.nickname?.[0] || 'M'}
                   </div>
                   <div>
                     <div className="flex items-center gap-2"><span className="font-bold text-[#725E77] text-lg">{m.nickname}</span>{m.birthday && new Date().getMonth()+1 === parseInt(m.birthday.split('-')[1]) && <span className="bg-[#BC8F8F] text-white text-[10px] px-2 py-0.5 rounded-full font-bold flex items-center gap-1"><Cake size={10} /> 壽星</span>}</div>
@@ -546,6 +512,32 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
             </div>
           )})}
         </div>
+      </div>
+    </div>
+  );
+};
+
+// 修正：PracticeEditor 使用本地狀態
+const PracticeEditor = ({ initialPractices, onClose, onSave }) => {
+  const [localPractices, setLocalPractices] = useState(initialPractices);
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
+      <div className="bg-white p-6 rounded-3xl w-full max-w-sm space-y-4 max-h-[80vh] overflow-y-auto">
+        <h3 className="font-bold text-lg text-[#725E77]">設定本月練團時間</h3>
+        {localPractices.map((p, i) => (
+          <div key={i} className="bg-[#FDFBF7] p-3 rounded-xl border border-[#E0E0D9] space-y-2 relative">
+             <button onClick={() => setLocalPractices(localPractices.filter((_, idx) => idx !== i))} className="absolute top-2 right-2 text-[#BC8F8F]"><MinusCircle size={16}/></button>
+             <div className="text-xs text-[#C5B8BF] font-bold">開始</div>
+             <input type="datetime-local" step="1800" className="w-full bg-white p-2 rounded-lg text-sm" value={p.date} onChange={e => { const newP = [...localPractices]; newP[i].date = e.target.value; setLocalPractices(newP); }} />
+             <div className="text-xs text-[#C5B8BF] font-bold">結束</div>
+             <input type="datetime-local" step="1800" className="w-full bg-white p-2 rounded-lg text-sm" value={p.endTime || ''} onChange={e => { const newP = [...localPractices]; newP[i].endTime = e.target.value; setLocalPractices(newP); }} />
+             <input type="text" className="w-full bg-white p-2 rounded-lg text-sm" placeholder="標題" value={p.title} onChange={e => { const newP = [...localPractices]; newP[i].title = e.target.value; setLocalPractices(newP); }} />
+             <input type="text" className="w-full bg-white p-2 rounded-lg text-sm" placeholder="地點" value={p.location} onChange={e => { const newP = [...localPractices]; newP[i].location = e.target.value; setLocalPractices(newP); }} />
+          </div>
+        ))}
+        <button onClick={() => setLocalPractices([...localPractices, { date: new Date().toISOString(), endTime: '', title: '新練團', location: '圓頭音樂' }])} className="w-full py-2 border-2 border-dashed border-[#77ABC0] text-[#77ABC0] rounded-xl font-bold flex justify-center items-center gap-1"><Plus size={16}/> 增加場次</button>
+        <div className="flex gap-2 pt-2"><button onClick={onClose} className="flex-1 p-3 rounded-xl text-slate-400 font-bold">取消</button><button onClick={() => onSave(localPractices)} className="flex-1 p-3 rounded-xl bg-[#77ABC0] text-white font-bold shadow-lg">儲存設定</button></div>
       </div>
     </div>
   );
