@@ -18,26 +18,20 @@ import {
 // 🔐 權限管理區
 // ==========================================
 
-// 1. 團員白名單 (只有這些 Email 可以登入使用)
-const MEMBER_EMAILS = [
-  "jamie.chou0917@gmail.com", 
-  "drummer@gmail.com",
-  "bass@gmail.com",
-  "keyboard@gmail.com",
-  "demo@test.com"
-];
-
-// 2. 超級管理員 (擁有後台、編輯全團資料權限)
+// 1. 超級管理員 (最後的救援鑰匙，保留您的 Email 以防資料庫清空時無法登入)
+// ⚠️ 這裡只保留「管理員」的寫死名單，一般團員名單已移除，改由資料庫控制
 const ADMIN_EMAILS = [
   "jamie.chou0917@gmail.com",
   "demo@test.com"
 ];
 
-// 3. 特殊職位名稱
+// 2. 特殊職位名稱 (需與團員名單中的本名/暱稱一致)
 const ROLE_FINANCE_NAME = "陳昱維"; 
 const ROLE_ALCOHOL_NAME = "李家賢"; 
 
 // --- 🎸 樂團專屬設定 ---
+const BAND_LOGO_BASE64 = ""; 
+const BAND_LOGO_URL = ""; 
 const BAND_NAME = "不開玩笑";
 
 // --- Logo 元件 ---
@@ -68,34 +62,25 @@ const secureCopy = (text) => {
   }
 };
 
-// --- 工具: 莫蘭迪色調產生器 ---
-const MORANDI_PALETTE = ['#8C736F', '#AAB8AB', '#B7B7BD', '#CCD2CC', '#8f9e9d', '#b09e99'];
-const getMorandiColor = (str) => {
-  if (!str) return MORANDI_PALETTE[0];
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = str.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  const index = Math.abs(hash) % MORANDI_PALETTE.length;
-  return MORANDI_PALETTE[index];
-};
-
-// --- 工具: 匯出 CSV ---
+// --- 工具: 匯出 CSV (v9.0 規格) ---
 const exportToCSV = (data, filename) => {
   if (!data || !data.length) {
     alert("沒有資料可匯出");
     return;
   }
+  
+  // 自動偵測欄位並處理 CSV 格式
   const keys = Object.keys(data[0]);
   const separator = ',';
+  
   const csvContent =
-    '\uFEFF' + 
+    '\uFEFF' + // BOM 解決中文亂碼
     keys.join(separator) +
     '\n' +
     data.map(row => {
       return keys.map(k => {
         let cell = row[k] === null || row[k] === undefined ? '' : row[k];
-        cell = cell.toString().replace(/"/g, '""'); 
+        cell = cell.toString().replace(/"/g, '""'); // Escape double quotes
         if (cell.search(/("|,|\n)/g) >= 0) cell = `"${cell}"`;
         return cell;
       }).join(separator);
@@ -114,7 +99,18 @@ const exportToCSV = (data, filename) => {
   }
 };
 
-// --- 工具: 生日顯示 ---
+// --- 工具: 顏色產生器 ---
+const stringToColor = (str) => {
+  if (!str) return '#CBABCA';
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const c = (hash & 0x00FFFFFF).toString(16).toUpperCase();
+  return '#' + '00000'.substring(0, 6 - c.length) + c;
+};
+
+// --- 工具: 生日顯示 (隱藏年份) ---
 const formatBirthdayDisplay = (dateStr) => {
   if (!dateStr) return "未知";
   const parts = dateStr.split('-');
@@ -173,7 +169,7 @@ try {
   }
 } catch (e) { console.error("Firebase init error:", e); }
 
-// --- 預設資料 (v10.0 更新) ---
+// --- 預設資料 (v9.0 更新) ---
 const DEFAULT_GENERAL_DATA = {
   settings: {
     studioRate: 350, kbRate: 200,     
@@ -200,7 +196,7 @@ const App = () => {
   
   const appId = USER_CONFIG.appId; 
 
-  // Auth
+  // Auth 監聽 (已修正：移除這裡的白名單阻擋，改到資料載入後判斷)
   useEffect(() => {
     if (auth) {
       getRedirectResult(auth).catch(e => console.log(e));
@@ -215,13 +211,16 @@ const App = () => {
     } else { setLoading(false); }
   }, []);
 
-  // 權限與白名單
+  // 權限與白名單檢查 (與 Members 動態連動)
   useEffect(() => {
+    // 等待 members 資料載入後才進行判斷
     if (user) {
       const userEmail = user.email;
       const isAdmin = ADMIN_EMAILS.includes(userEmail);
       
-      // 非 Canvas 環境嚴格檢查白名單
+      // 檢查是否在成員名單內 (或是超級管理員)
+      // 非 Canvas 環境才檢查，避免預覽壞掉
+      // 邏輯修正：只要 members 有載入過資料(length>0)，就開始執行檢查
       if (!IS_CANVAS && !isAdmin && members.length > 0) {
          const isMember = members.some(m => m.email === userEmail);
          if (!isMember) {
@@ -231,6 +230,7 @@ const App = () => {
          }
       }
 
+      // 3. 職位權限分配
       const financeMember = members.find(m => m.realName === ROLE_FINANCE_NAME || m.nickname === ROLE_FINANCE_NAME);
       const isFinance = isAdmin || (financeMember && financeMember.email === userEmail);
       
@@ -245,7 +245,7 @@ const App = () => {
     }
   }, [user, members]);
 
-  // Firestore 資料
+  // Firestore 資料監聽
   useEffect(() => {
     if (!db || !user) return;
     const unsubMembers = onSnapshot(getCollectionRef(db, 'members'), (snap) => setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() }))), (e) => {if(e.code==='permission-denied') console.warn("Perms error");});
@@ -280,7 +280,7 @@ const App = () => {
 
     switch (activeTab) {
       case 'dashboard': return <DashboardView members={members} generalData={data} alcoholCount={alcohols.length} db={db} role={role} user={user} />;
-      case 'logs': return <SessionLogManager sessions={logs} practices={data.practices || []} members={members} settings={data.settings} db={db} role={role} user={user} />;
+      case 'logs': return <SessionLogManager sessions={logs} practices={data.practices || []} members={members} settings={data.settings} db={db} role={role} />;
       case 'alcohol': return <AlcoholManager alcohols={alcohols} members={members} settings={data.settings} db={db} role={role} user={user} />;
       case 'tech': return <TechView songs={songs} db={db} role={role} user={user} />;
       case 'admin': return <AdminDashboard members={members} logs={logs} generalData={data} db={db} />;
@@ -289,7 +289,8 @@ const App = () => {
   };
 
   if (loading) return <div className="h-screen flex justify-center items-center bg-[#FDFBF7]"><Loader2 className="animate-spin text-[#77ABC0]"/></div>;
-  const showImage = !imgError && BAND_LOGO_BASE64;
+  const logoSrc = BAND_LOGO_BASE64 || BAND_LOGO_URL;
+  const showImage = logoSrc && !imgError;
   const handlePrankClick = (e) => {
     const btn = e.currentTarget;
     btn.style.transform = 'rotate(360deg) scale(1.2)';
@@ -318,7 +319,7 @@ const App = () => {
     <div className="min-h-screen bg-[#FDFBF7] text-[#725E77] font-sans pb-24">
       <header className="bg-white/80 backdrop-blur sticky top-0 z-40 border-b border-[#CBABCA]/20 px-4 py-3 flex justify-between items-center shadow-sm">
         <div className="flex items-center gap-3">
-          {showImage ? <img src={BAND_LOGO_BASE64} alt="Logo" className="w-9 h-9 rounded-xl object-contain bg-white shadow-sm" onError={() => setImgError(true)} /> : <BandLogo />}
+          {showImage ? <img src={logoSrc} alt="Logo" className="w-9 h-9 rounded-xl object-contain bg-white shadow-sm" onError={() => setImgError(true)} /> : <BandLogo />}
           <span className="font-bold text-lg tracking-wide text-[#77ABC0]">{BAND_NAME}</span>
         </div>
         <div className="flex items-center gap-2">
@@ -326,7 +327,7 @@ const App = () => {
           {role.admin && (
              <button onClick={() => setActiveTab('admin')} className={`p-1.5 rounded-full transition ${activeTab === 'admin' ? 'bg-[#77ABC0] text-white' : 'text-[#CBABCA] hover:bg-[#F2D7DD]'}`}><Settings size={18}/></button>
           )}
-          <div className="w-8 h-8 bg-[#E5C3D3]/20 rounded-full flex items-center justify-center text-[#77ABC0] font-bold border-2 border-white shadow-sm overflow-hidden" style={{backgroundColor: user.photoURL ? 'transparent' : stringToColor(user.displayName)}}>
+          <div className="w-8 h-8 bg-[#E5C3D3]/20 rounded-full flex items-center justify-center text-[#77ABC0] font-bold border-2 border-white shadow-sm overflow-hidden" style={{backgroundColor: stringToColor(user.displayName)}}>
              {user.photoURL ? <img src={user.photoURL} alt="U" /> : user.displayName?.[0]}
           </div>
           <button onClick={handleLogout} className="p-1.5 bg-[#FDFBF7] rounded-full text-[#BC8F8F] hover:bg-[#F2D7DD] transition"><LogOut size={16} /></button>
@@ -348,6 +349,7 @@ const App = () => {
       {showPrankModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
           <div className="bg-white w-full max-w-xs p-6 rounded-[32px] text-center shadow-2xl animate-in zoom-in-95 duration-200 relative overflow-hidden">
+            <div className="absolute top-0 left-0 right-0 h-2 bg-[#F1CEBA]"></div>
             <div className="w-20 h-20 bg-[#F1CEBA]/20 text-[#F1CEBA] rounded-full flex items-center justify-center mx-auto mb-4"><Ghost size={40} className="animate-bounce" /></div>
             <h3 className="text-xl font-black text-[#725E77] mb-2">👻 抓到了！</h3>
             <p className="text-[#6E7F9B] font-bold mb-6">嘿嘿！被騙了吧！<br/>這顆按鈕只是裝飾！😜</p>
@@ -403,8 +405,11 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
 
   const handleSaveMember = async (memberData) => {
     if (!db) return;
-    if (memberData.id) await updateDoc(getDocRef(db, 'members', memberData.id), memberData);
-    else await addDoc(getCollectionRef(db, 'members'), memberData);
+    if (memberData.id) {
+      await updateDoc(getDocRef(db, 'members', memberData.id), memberData);
+    } else {
+      await addDoc(getCollectionRef(db, 'members'), memberData);
+    }
     setEditingMember(null);
   };
 
@@ -593,10 +598,7 @@ const MemberEditModal = ({ member, onClose, onSave }) => {
 // --- 2. 日誌管理器 ---
 const SessionLogManager = ({ sessions, practices, members, settings, db, appId, role, user }) => {
   const [activeSessionId, setActiveSessionId] = useState(null);
-  
-  // scheduledDates 現在是 practices 陣列，需要先提取日期
   const existingDates = sessions.map(s => s.date);
-
   const pendingPractices = practices.filter(p => {
       const pDate = p.date.split('T')[0];
       return !existingDates.includes(pDate);
@@ -752,7 +754,7 @@ const SessionDetail = ({ session, members, settings, onBack, db, role, user }) =
 
       <div className="bg-white rounded-[32px] border border-[#E0E0D9] p-2 min-h-[300px]">
         {tab === 'tracks' && <TrackList session={session} db={db} user={user} role={role} />}
-        {tab === 'practice-fee' && <PracticeFeeCalculator session={session} members={members} settings={settings} db={db} role={role} />}
+        {tab === 'practice-fee' && <PracticeFeeCalculator session={session} members={members} settings={settings} role={role} />}
         {tab === 'misc-fee' && <MiscFeeCalculator session={session} members={members} db={db} user={user} />}
       </div>
     </div>
@@ -902,7 +904,7 @@ const PracticeFeeCalculator = ({ session, members, settings, role, db }) => {
 };
 
 // --- 雜支分攤 ---
-const MiscFeeCalculator = ({ session, members, db }) => {
+const MiscFeeCalculator = ({ session, members, db, user }) => {
   const [items, setItems] = useState(session.miscExpenses || []); 
   const [newItem, setNewItem] = useState({ item: '', amount: '', payerId: '', splitters: [] });
   
@@ -925,6 +927,7 @@ const MiscFeeCalculator = ({ session, members, db }) => {
   };
   return (
     <div className="p-4 space-y-6">
+      {/* 新增區塊 */}
       <div className="bg-[#FDFBF7] p-4 rounded-2xl border border-[#E0E0D9] space-y-3">
          <div className="flex gap-2"><input className="flex-1 bg-white p-2 rounded-xl text-xs outline-none" placeholder="項目" value={newItem.item} onChange={e=>setNewItem({...newItem, item: e.target.value})}/><input className="w-20 bg-white p-2 rounded-xl text-xs outline-none" type="number" placeholder="$" value={newItem.amount} onChange={e=>setNewItem({...newItem, amount: e.target.value})}/></div>
          <div className="flex items-center gap-2 overflow-x-auto pb-1"><span className="text-[10px] font-bold text-[#C5B8BF] shrink-0">墊付:</span>{members.map(m => (<button key={m.id} onClick={()=>setNewItem({...newItem, payerId: m.id})} className={`px-2 py-1 rounded-lg text-[10px] font-bold border shrink-0 ${newItem.payerId === m.id ? 'bg-[#F1CEBA] text-white border-[#F1CEBA]' : 'bg-white text-[#C5B8BF] border-[#E0E0D9]'}`}>{m.nickname}</button>))}</div>
