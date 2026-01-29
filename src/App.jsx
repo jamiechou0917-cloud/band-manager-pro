@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signInWithCustomToken, signOut, signInWithRedirect, getRedirectResult } from 'firebase/auth';
 import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+// ⚠️ 關鍵修正：移除所有動物圖示引用，只保留基礎圖示，避免版本衝突導致白頁
 import { 
   Music2, Mic2, Users, ClipboardList, Beer, Calendar, 
   Settings, LogOut, Menu, X, ShieldCheck, Plus, Loader2, 
@@ -12,7 +13,7 @@ import {
   PartyPopper, Headphones, Speaker, Star, Image as ImageIcon, Disc,
   Ghost, Pencil, Trash2, Lock, Save, MinusCircle, FilePlus, AlertTriangle,
   Database, Download, Filter, Search, Clock, CheckSquare,
-  User, Heart, Sun, Moon, Cloud 
+  User 
 } from 'lucide-react';
 
 // ==========================================
@@ -25,13 +26,16 @@ class ErrorBoundary extends React.Component {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="p-8 text-center bg-red-50 text-red-800 min-h-screen flex flex-col items-center justify-center">
-          <h2 className="text-2xl font-bold mb-4">糟糕，程式發生錯誤</h2>
-          <p className="mb-4">請嘗試重新整理頁面。</p>
-          <pre className="text-xs bg-white p-4 rounded border border-red-200 max-w-xs overflow-auto text-left">
+        <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-slate-50 text-slate-800">
+          <AlertTriangle size={48} className="text-red-500 mb-4"/>
+          <h2 className="text-xl font-bold mb-2">程式發生錯誤</h2>
+          <p className="text-sm text-slate-600 mb-4">請嘗試重新整理頁面</p>
+          <pre className="bg-slate-200 p-4 rounded-lg text-xs overflow-auto max-w-full mb-6 border border-slate-300">
             {this.state.error?.toString()}
           </pre>
-          <button onClick={() => window.location.reload()} className="mt-6 px-6 py-2 bg-red-600 text-white rounded-lg">重新整理</button>
+          <button onClick={() => window.location.reload()} className="px-6 py-3 bg-[#77ABC0] text-white rounded-xl font-bold shadow-lg">
+            重新整理
+          </button>
         </div>
       );
     }
@@ -56,20 +60,17 @@ const ROLE_ALCOHOL_NAME = "李家賢";
 // --- 🎸 樂團專屬設定 ---
 const BAND_NAME = "不開玩笑";
 
-// --- 🎨 莫蘭迪色調與頭像設定 ---
+// --- 🎨 莫蘭迪色調 ---
 const MORANDI_COLORS = ['#8C736F', '#AAB8AB', '#B7B7BD', '#CCD2CC', '#9F8D8B', '#8FA39A'];
-// 使用基礎圖示，確保所有環境都能載入
-const MEMBER_ICONS = [User, Smile, Star, Heart, Sun, Moon, Cloud, Music2];
 
-const getMemberStyle = (name) => {
-  if (!name) return { color: MORANDI_COLORS[0], Icon: User };
+// 工具: 生成名字對應顏色
+const stringToColor = (str) => {
+  if (!str) return MORANDI_COLORS[0];
   let hash = 0;
-  for (let i = 0; i < name.length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
   }
-  const colorIndex = Math.abs(hash) % MORANDI_COLORS.length;
-  const iconIndex = Math.abs(hash) % MEMBER_ICONS.length;
-  return { color: MORANDI_COLORS[colorIndex], Icon: MEMBER_ICONS[iconIndex] };
+  return MORANDI_COLORS[Math.abs(hash) % MORANDI_COLORS.length];
 };
 
 const BandLogo = () => (
@@ -154,7 +155,7 @@ const getZodiac = (dateStr) => {
   return (z[idx]?.n || "") + "座";
 };
 
-// --- Firebase ---
+// --- Firebase Config ---
 const USER_CONFIG = {
   apiKey: "AIzaSyDb36ftpgHzZEH2IuYOsPmJEiKgeVhLWKk",
   authDomain: "bandmanager-a3049.firebaseapp.com",
@@ -163,8 +164,17 @@ const USER_CONFIG = {
   messagingSenderId: "193559225053",
   appId: "1:193559225053:web:124fd5a7ab3cf1a854f134"
 };
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : USER_CONFIG;
+
+// ⚠️ 關鍵修正：Firebase Config 解析防呆
+let firebaseConfig;
 const IS_CANVAS = typeof __firebase_config !== 'undefined';
+try {
+  firebaseConfig = IS_CANVAS ? JSON.parse(__firebase_config) : USER_CONFIG;
+} catch (e) {
+  console.error("Config parse error, falling back to USER_CONFIG");
+  firebaseConfig = USER_CONFIG;
+}
+
 const storageAppId = IS_CANVAS ? (typeof __app_id !== 'undefined' ? __app_id : 'band-manager-preview') : null;
 
 // Helper
@@ -221,14 +231,15 @@ const MainApp = () => {
     } else { setLoading(false); }
   }, []);
 
-  // 權限與白名單檢查
+  // 權限與白名單檢查 (動態連動版)
   useEffect(() => {
     if (user) {
       const userEmail = user.email;
       const isAdmin = ADMIN_EMAILS.includes(userEmail);
       
+      // 白名單檢查
       if (!IS_CANVAS && !isAdmin && members.length > 0) {
-         const isMember = members.some(m => m.email === user.email);
+         const isMember = members.some(m => m.email === userEmail);
          if (!isMember) {
             alert(`⛔ 抱歉，您的 Email (${user.email}) 不在團員名單中。\n請聯繫團長將您的 Email 加入成員名單。`);
             signOut(auth).then(() => setUser(null));
@@ -236,6 +247,7 @@ const MainApp = () => {
          }
       }
 
+      // 職位權限分配
       const financeMember = members.find(m => m.realName === ROLE_FINANCE_NAME || m.nickname === ROLE_FINANCE_NAME);
       const isFinance = isAdmin || (financeMember && financeMember.email === userEmail);
       
@@ -479,12 +491,15 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
             <div key={m.id} onClick={() => setExpandedMember(expandedMember === m.id ? null : m.id)} className={`bg-white p-4 rounded-2xl border shadow-sm transition-all cursor-pointer ${expandedMember === m.id ? 'border-[#CBABCA] ring-1 ring-[#CBABCA]/30' : 'border-[#E0E0D9]'}`}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white font-bold text-lg border-2 border-white shadow-sm overflow-hidden" style={{backgroundColor: style.color}}><Icon size={24} /></div>
+                  <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white font-bold text-lg border-2 border-white shadow-sm overflow-hidden" style={{backgroundColor: style.color}}>
+                    {m.avatarUrl ? <img src={m.avatarUrl} alt="U" className="w-full h-full object-cover"/> : (m.nickname?.[0] || 'M')}
+                  </div>
                   <div>
                     <div className="flex items-center gap-2"><span className="font-bold text-[#725E77] text-lg">{m.nickname}</span>{m.birthday && new Date().getMonth()+1 === parseInt(m.birthday.split('-')[1]) && <span className="bg-[#BC8F8F] text-white text-[10px] px-2 py-0.5 rounded-full font-bold flex items-center gap-1"><Cake size={10} /> 壽星</span>}</div>
                     <div className="flex items-center gap-1 text-xs text-[#C5B8BF] font-medium"><span className="text-[#77ABC0] font-bold">{m.instrument}</span><span>•</span><span>{m.realName}</span></div>
                   </div>
                 </div>
+                {/* 互動式日期出席按鈕 */}
                 <div className="flex gap-1.5 overflow-x-auto max-w-[120px] scrollbar-hide">
                   {practices.map(p => {
                     const dateStr = p.date ? p.date.split('T')[0] : ''; // 防呆
@@ -520,7 +535,7 @@ const MemberEditModal = ({ member, onClose, onSave }) => {
            <input className="bg-[#FDFBF7] p-3 rounded-xl text-sm" placeholder="本名" value={form.realName || ''} onChange={e => setForm({...form, realName: e.target.value})} />
         </div>
         <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm border border-[#77ABC0]/30" placeholder="Google Email (權限綁定用)" value={form.email || ''} onChange={e => setForm({...form, email: e.target.value})} />
-        {/* 移除頭像網址，改用自動配色 */}
+        <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm" placeholder="頭像網址 (FB/IG圖片連結，選填)" value={form.avatarUrl || ''} onChange={e => setForm({...form, avatarUrl: e.target.value})} />
         <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm" placeholder="樂器 (Vocal, Bass...)" value={form.instrument || ''} onChange={e => setForm({...form, instrument: e.target.value})} />
         <input type="date" className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm" value={form.birthday || ''} onChange={e => setForm({...form, birthday: e.target.value})} />
         <textarea className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm h-20" placeholder="備註..." value={form.note || ''} onChange={e => setForm({...form, note: e.target.value})} />
@@ -668,7 +683,7 @@ const SessionDetail = ({ session, members, settings, onBack, db, role, user }) =
   );
 };
 
-// --- TrackList (修復留言功能) ---
+// --- TrackList ---
 const TrackList = ({ session, db, user, role }) => {
   const [expandedTrack, setExpandedTrack] = useState(null);
   const [newTrackName, setNewTrackName] = useState("");
@@ -832,19 +847,28 @@ const TechView = ({ songs, db, role, user }) => {
 
 const AdminDashboard = ({ members, logs, generalData, db }) => {
   const [tab, setTab] = useState('members');
+  const [filterStart, setFilterStart] = useState('');
+  const [filterEnd, setFilterEnd] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
   const [alcoholTypes, setAlcoholTypes] = useState(generalData.settings?.alcoholTypes || []);
   const handleUpdateSettings = async () => { await updateDoc(getDocRef(db, 'general', 'info'), { settings: { ...generalData.settings, alcoholTypes } }); alert("設定已更新"); };
   const handleExport = () => { const dataToExport = tab === 'members' ? members : logs; const formattedData = dataToExport.map(item => { if (tab === 'members') return { 暱稱: item.nickname, 本名: item.realName, 樂器: item.instrument, 生日: item.birthday, Email: item.email || '' }; else { const attendeesCount = members.filter(m => m.attendance?.includes(item.date)).length; const trackDetails = item.tracks?.map(t => `${t.title} ${t.comments?.length ? '(' + t.comments.map(c => c.user + ':' + c.text).join('/') + ')' : ''}`).join('; '); return { 日期: item.date, 地點: item.location, 出席人數: attendeesCount, 練習曲目: trackDetails, 備註: item.funNotes }; } }); exportToCSV(formattedData, `Band_${tab}_export.csv`); };
   const handleDelete = async (collectionName, id) => { if (confirm("⚠️ 警告：這將永久刪除此筆資料！確定嗎？")) await deleteDoc(getDocRef(db, collectionName, id)); };
+
+  const displayData = (tab === 'members' ? members : logs).filter(item => {
+     const inDateRange = tab === 'logs' && filterStart && filterEnd ? (item.date >= filterStart && item.date <= filterEnd) : true;
+     const matchesSearch = searchTerm ? Object.values(item).some(val => String(val).toLowerCase().includes(searchTerm.toLowerCase())) : true;
+     return inDateRange && matchesSearch;
+  });
 
   return (
     <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 pb-20">
       <div className="bg-white p-5 rounded-[32px] border border-[#E0E0D9] shadow-sm">
         <h2 className="text-xl font-black text-[#725E77] flex items-center gap-2 mb-4"><Database size={24}/> 後台管理</h2>
         <div className="flex gap-2 mb-4"><button onClick={() => setTab('members')} className={`px-4 py-2 rounded-xl text-xs font-bold ${tab === 'members' ? 'bg-[#77ABC0] text-white' : 'bg-[#F0F4F5]'}`}>成員</button><button onClick={() => setTab('logs')} className={`px-4 py-2 rounded-xl text-xs font-bold ${tab === 'logs' ? 'bg-[#77ABC0] text-white' : 'bg-[#F0F4F5]'}`}>紀錄</button><button onClick={() => setTab('settings')} className={`px-4 py-2 rounded-xl text-xs font-bold ${tab === 'settings' ? 'bg-[#77ABC0] text-white' : 'bg-[#F0F4F5]'}`}>設定</button></div>
-        {tab === 'settings' ? (<div className="space-y-3"><h3 className="font-bold text-[#725E77]">酒櫃分類</h3><textarea className="w-full h-24 p-3 bg-[#FDFBF7] rounded-xl text-xs" value={alcoholTypes.join(',')} onChange={e => setAlcoholTypes(e.target.value.split(','))} /><button onClick={handleUpdateSettings} className="w-full py-2 bg-[#77ABC0] text-white rounded-xl text-xs font-bold">儲存設定</button></div>) : (<button onClick={handleExport} className="w-full py-3 bg-[#E8F1E9] text-[#5F7A61] rounded-xl text-xs font-bold flex items-center justify-center gap-2"><Download size={16}/> 匯出 CSV</button>)}
+        {tab === 'settings' ? (<div className="space-y-3"><h3 className="font-bold text-[#725E77]">酒櫃分類</h3><textarea className="w-full h-24 p-3 bg-[#FDFBF7] rounded-xl text-xs" value={alcoholTypes.join(',')} onChange={e => setAlcoholTypes(e.target.value.split(','))} /><button onClick={handleUpdateSettings} className="w-full py-2 bg-[#77ABC0] text-white rounded-xl text-xs font-bold">儲存設定</button></div>) : (<><div className="bg-[#FDFBF7] p-3 rounded-xl border border-[#E0E0D9] mb-4 space-y-2"><div className="text-[10px] font-bold text-[#C5B8BF] uppercase flex items-center gap-1"><Search size={10}/> 關鍵字搜尋</div><input type="text" className="w-full p-2 rounded-lg text-xs bg-white border border-[#E0E0D9] outline-none focus:ring-1 ring-[#77ABC0]" placeholder={tab === 'members' ? "搜尋姓名、樂器..." : "搜尋地點、備註..."} value={searchTerm} onChange={e=>setSearchTerm(e.target.value)} /></div>{tab === 'logs' && (<div className="bg-[#FDFBF7] p-3 rounded-xl border border-[#E0E0D9] mb-4 space-y-2"><div className="text-[10px] font-bold text-[#C5B8BF] uppercase flex items-center gap-1"><Filter size={10}/> 日期篩選</div><div className="flex gap-2"><input type="date" className="w-full p-2 rounded-lg text-xs bg-white border border-[#E0E0D9]" value={filterStart} onChange={e=>setFilterStart(e.target.value)} /><span className="text-[#C5B8BF] self-center">~</span><input type="date" className="w-full p-2 rounded-lg text-xs bg-white border border-[#E0E0D9]" value={filterEnd} onChange={e=>setFilterEnd(e.target.value)} /></div></div>)}<button onClick={handleExport} className="w-full py-3 bg-[#E8F1E9] text-[#5F7A61] rounded-xl text-xs font-bold flex items-center justify-center gap-2"><Download size={16}/> 匯出 CSV</button></>)}
       </div>
-      {tab !== 'settings' && (<div className="bg-white rounded-[24px] border border-[#E0E0D9] overflow-hidden p-4"><table className="w-full text-left text-xs"><thead><tr><th className="p-2">名稱/日期</th><th className="p-2">詳情</th><th className="p-2 text-right">操作</th></tr></thead><tbody>{(tab === 'members' ? members : logs).map(i => (<tr key={i.id} className="border-t"><td className="p-2 font-bold">{tab === 'members' ? i.nickname : i.date}</td><td className="p-2 text-slate-500">{tab === 'members' ? i.instrument : i.location}</td><td className="p-2 text-right"><button onClick={() => handleDelete(tab === 'members' ? 'members' : 'logs', i.id)} className="text-[#BC8F8F]"><Trash2 size={14}/></button></td></tr>))}</tbody></table></div>)}
+      {tab !== 'settings' && (<div className="bg-white rounded-[24px] border border-[#E0E0D9] overflow-hidden p-4"><table className="w-full text-left text-xs"><thead><tr><th className="p-2">名稱/日期</th><th className="p-2">詳情</th><th className="p-2 text-right">操作</th></tr></thead><tbody>{(displayData).map(i => (<tr key={i.id} className="border-t"><td className="p-2 font-bold">{tab === 'members' ? i.nickname : i.date}</td><td className="p-2 text-slate-500">{tab === 'members' ? i.instrument : i.location}</td><td className="p-2 text-right"><button onClick={() => handleDelete(tab === 'members' ? 'members' : 'logs', i.id)} className="text-[#BC8F8F]"><Trash2 size={14}/></button></td></tr>))}</tbody></table></div>)}
     </div>
   );
 };
