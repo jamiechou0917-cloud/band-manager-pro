@@ -41,7 +41,7 @@ class ErrorBoundary extends React.Component {
 // 🔐 設定與常數
 // ==========================================
 
-// 1. 超級管理員
+// 1. 超級管理員 (請確保 Email 全小寫)
 const ADMIN_EMAILS = [
   "jamie.chou0917@gmail.com",
   "demo@test.com"
@@ -222,32 +222,37 @@ const App = () => {
     } else { setLoading(false); }
   }, []);
 
-  // 權限與白名單 (修正：更寬容的 Email 比對)
+  // 權限與白名單檢查 (修正版：轉小寫、去空白)
   useEffect(() => {
-    if (user && members.length > 0) {
-       const userEmail = user.email.trim().toLowerCase();
-       const isAdmin = ADMIN_EMAILS.includes(userEmail);
-       
-       if (!IS_CANVAS && !isAdmin && !members.some(m => m.email && m.email.trim().toLowerCase() === userEmail)) {
-          alert(`您的 Email (${user.email}) 不在團員名單中。`);
-          signOut(auth).then(() => setUser(null));
-          return;
-       }
-       
-       const checkRole = (name) => members.some(m => m.email && m.email.trim().toLowerCase() === userEmail && (m.realName === name || m.nickname === name));
-       
-       setRole({ 
-         admin: isAdmin, 
-         finance: isAdmin || checkRole(ROLE_FINANCE_NAME), 
-         alcohol: isAdmin || checkRole(ROLE_ALCOHOL_NAME) 
-       });
-       setLoading(false);
-    } else if (user) {
-       const isAdmin = ADMIN_EMAILS.includes(user.email);
-       setRole({ admin: isAdmin, finance: false, alcohol: false });
-       if(!IS_CANVAS) setLoading(false);
+    if (user) {
+      // 1. 正規化 Email (轉小寫+去空白)
+      const userEmail = (user.email || '').toLowerCase().trim();
+      
+      // 2. 檢查是否為管理員
+      const isAdmin = ADMIN_EMAILS.map(e => e.toLowerCase().trim()).includes(userEmail);
+      
+      // 3. 檢查白名單 (非 Canvas 環境 + 非管理員 + 資料已載入)
+      if (!IS_CANVAS && !isAdmin && members.length > 0) {
+         // 比對資料庫名單時，也一併正規化
+         const isMember = members.some(m => (m.email || '').toLowerCase().trim() === userEmail);
+         if (!isMember) {
+            alert(`⛔ 您的 Email (${user.email}) 不在團員名單中，無法存取。\n請聯繫團長將您的 Email 加入成員名單。`);
+            signOut(auth).then(() => setUser(null));
+            return;
+         }
+      }
+
+      // 4. 職位權限分配 (找到對應的成員資料)
+      const currentMember = members.find(m => (m.email || '').toLowerCase().trim() === userEmail);
+      
+      const isFinance = isAdmin || (currentMember && (currentMember.realName === ROLE_FINANCE_NAME || currentMember.nickname === ROLE_FINANCE_NAME));
+      const isAlcohol = isAdmin || (currentMember && (currentMember.realName === ROLE_ALCOHOL_NAME || currentMember.nickname === ROLE_ALCOHOL_NAME));
+      
+      setRole({ admin: isAdmin, finance: isFinance, alcohol: isAlcohol });
+      setLoading(false);
     } else {
-       if(!IS_CANVAS) setLoading(false);
+      setRole({ admin: false, finance: false, alcohol: false });
+      setLoading(false);
     }
   }, [user, members]);
 
@@ -290,6 +295,8 @@ const App = () => {
   };
 
   if (loading && !generalData) return <div className="h-screen flex justify-center items-center bg-[#FDFBF7]"><Loader2 className="animate-spin text-[#77ABC0]"/></div>;
+  const showImage = !imgError && BAND_LOGO_BASE64;
+  const handlePrankClick = (e) => { const btn = e.currentTarget; btn.style.transform = 'rotate(360deg) scale(1.2)'; setTimeout(() => { setShowPrankModal(true); btn.style.transform = 'rotate(0deg) scale(1)'; }, 300); };
 
   if (!user) return (
       <div className="h-screen flex flex-col justify-center items-center bg-[#FDFBF7] p-6 text-center">
@@ -306,25 +313,31 @@ const App = () => {
     <div className="min-h-screen bg-[#FDFBF7] text-[#725E77] font-sans pb-24">
       <header className="bg-white/80 backdrop-blur sticky top-0 z-40 border-b border-[#CBABCA]/20 px-4 py-3 flex justify-between items-center shadow-sm">
         <div className="flex items-center gap-3">
-          <BandLogo />
+          {showImage ? <img src={BAND_LOGO_BASE64} alt="Logo" className="w-9 h-9 rounded-xl object-contain bg-white shadow-sm" onError={() => setImgError(true)} /> : <BandLogo />}
           <span className="font-bold text-lg tracking-wide text-[#77ABC0]">{BAND_NAME}</span>
         </div>
         <div className="flex items-center gap-2">
-          {role.admin && <button onClick={() => setActiveTab('admin')} className={`p-1.5 rounded-full transition ${activeTab === 'admin' ? 'bg-[#77ABC0] text-white' : 'text-[#CBABCA] hover:bg-[#F2D7DD]'}`}><Settings size={18}/></button>}
+          {role.admin && <span className="bg-rose-100 text-rose-600 text-[10px] px-2 py-0.5 rounded-full font-bold">Admin</span>}
+          {role.admin && (
+             <button onClick={() => setActiveTab('admin')} className={`p-1.5 rounded-full transition ${activeTab === 'admin' ? 'bg-[#77ABC0] text-white' : 'text-[#CBABCA] hover:bg-[#F2D7DD]'}`}><Settings size={18}/></button>
+          )}
           <div className="w-8 h-8 rounded-full border-2 border-white shadow-sm overflow-hidden bg-slate-200" style={{backgroundColor: stringToColor(user.displayName)}}>
              {user.photoURL ? <img src={user.photoURL} alt="U" /> : <div className="w-full h-full flex items-center justify-center text-xs font-bold text-white"><User size={16}/></div>}
           </div>
           <button onClick={handleLogout} className="p-1.5 bg-[#FDFBF7] rounded-full text-[#BC8F8F] hover:bg-[#F2D7DD] transition"><LogOut size={16} /></button>
         </div>
       </header>
+
       <main className="max-w-md mx-auto p-4">{renderContent()}</main>
-      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-[#CBABCA]/20 px-2 py-2 z-50 flex justify-around items-center pb-safe">
+
+      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-[#CBABCA]/20 px-2 py-2 z-50 flex justify-around items-center pb-safe shadow-[0_-4px_20px_-10px_rgba(203,171,202,0.15)]">
         <NavBtn id="dashboard" icon={Users} label="團員" active={activeTab} set={setActiveTab} />
         <NavBtn id="logs" icon={ClipboardList} label="日誌" active={activeTab} set={setActiveTab} />
         <div className="relative -top-6"><button onClick={handlePrankClick} className="w-14 h-14 rounded-full flex items-center justify-center shadow-xl border-4 border-[#FDFBF7] bg-[#F1CEBA] text-white transition-all duration-500 hover:rotate-12 active:scale-95"><Ghost size={24} /></button></div>
         <NavBtn id="alcohol" icon={Beer} label="酒櫃" active={activeTab} set={setActiveTab} />
         <NavBtn id="tech" icon={Zap} label="資源" active={activeTab} set={setActiveTab} />
       </nav>
+
       {showPrankModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
           <div className="bg-white w-full max-w-xs p-6 rounded-[32px] text-center shadow-2xl animate-in zoom-in-95 duration-200 relative overflow-hidden">
@@ -348,15 +361,11 @@ const NavBtn = ({ id, icon: Icon, label, active, set }) => (
 // --- 1. Dashboard ---
 const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) => {
   const [editingPractice, setEditingPractice] = useState(false);
-  
-  // 修正：從 props 獲取 practices，確保即時更新
-  const practices = generalData.practices || [];
-  
+  const [practices, setPractices] = useState(generalData.practices || []);
   const [expandedMember, setExpandedMember] = useState(null);
   const [editingMember, setEditingMember] = useState(null); 
   
   const now = new Date();
-  
   const sortedPractices = [...practices]
     .filter(p => p && p.date) 
     .map(p => ({...p, dateObj: new Date(p.date), endObj: p.endTime ? new Date(p.endTime) : new Date(new Date(p.date).getTime() + 2*60*60*1000) }))
@@ -368,14 +377,12 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
   const isValidDate = !isNaN(nextDateObj.getTime());
   const diffDays = isValidDate ? Math.ceil((nextDateObj - now) / (1000 * 60 * 60 * 24)) : 0; 
 
-  // 修正：PracticeEditor 使用本地狀態，儲存時才更新 Firestore
   const handleUpdatePractices = async (newPractices) => { 
     if (!db) return; 
     await updateDoc(getDocRef(db, 'general', 'info'), { practices: newPractices }); 
     setEditingPractice(false); 
   };
   
-  // 修正：更嚴格的 Email 比對與提示
   const toggleAttendance = async (memberId, dateStr) => {
     const member = members.find(m => m.id === memberId);
     if (!member) return;
@@ -398,7 +405,7 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
   };
   
   const handleSaveMember = async (data) => { if (!db) return; data.id ? await updateDoc(getDocRef(db, 'members', data.id), data) : await addDoc(getCollectionRef(db, 'members'), data); setEditingMember(null); };
-  const handleDeleteMember = async (id) => { if (confirm("確定刪除？")) await deleteDoc(getDocRef(db, 'members', id)); };
+  const handleDeleteMember = async (id) => { if (confirm("確定要刪除這位團員嗎？")) { await deleteDoc(getDocRef(db, 'members', id)); } };
   
   const addToCalendarUrl = () => {
     if (!isValidDate) return "#";
@@ -409,7 +416,6 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
 
   return (
     <div className="space-y-5 animate-in fade-in slide-in-from-bottom-4">
-      {/* 修正：傳遞 initialPractices 給 Editor */}
       {editingPractice && <PracticeEditor initialPractices={practices} onClose={()=>setEditingPractice(false)} onSave={handleUpdatePractices} />}
       {editingMember && <MemberEditModal member={editingMember} onClose={() => setEditingMember(null)} onSave={handleSaveMember} />}
 
@@ -428,7 +434,7 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
           <div className="text-lg text-[#E0E7EA] font-bold mb-4 flex items-center gap-2">
             <Clock size={18}/> 
             {isValidDate 
-              ? `${nextDateObj.toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute:'2-digit' })}`
+              ? `${nextDateObj.toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute:'2-digit' })} ${nextPractice.endTime ? `- ${new Date(nextPractice.endTime).toLocaleTimeString('zh-TW', { hour: '2-digit', minute:'2-digit' })}` : ''}`
               : "時間未定"}
           </div>
           <div className="flex items-center gap-2 bg-black/20 w-fit px-4 py-2 rounded-full backdrop-blur-sm border border-white/10"><MapPin size={16} className="text-[#E0E7EA]"/><span className="text-sm font-bold">{nextPractice.location}</span></div>
@@ -456,6 +462,7 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
         <div className="bg-[#E8F1E9] p-4 rounded-2xl border border-[#A8D8E2]/50 flex items-center gap-3 shadow-sm"><div className="bg-white p-2.5 rounded-full shadow-sm"><Check size={20} className="text-[#77ABC0]"/></div><div><div className="text-[10px] font-bold text-[#6E7F9B] uppercase">本月練團</div><div className="text-xl font-black text-[#725E77]">{practices.length} 場</div></div></div>
       </div>
 
+      {/* 點名表 */}
       <div>
         <div className="flex items-center justify-between px-1 mb-2"><h3 className="font-bold text-xl text-[#725E77]">本月練團點名</h3>{role.admin && <button onClick={() => setEditingMember({})} className="text-xs font-bold text-[#77ABC0] bg-[#F0F4F5] px-3 py-1.5 rounded-lg flex items-center gap-1"><Plus size={14}/> 新增團員</button>}</div>
         <div className="grid grid-cols-1 gap-3">
@@ -476,7 +483,7 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
                 </div>
                 <div className="flex gap-1.5 overflow-x-auto max-w-[120px] scrollbar-hide">
                   {practices.map(p => {
-                    const dateStr = p.date ? p.date.split('T')[0] : ''; 
+                    const dateStr = p.date ? p.date.split('T')[0] : ''; // 防呆
                     if (!dateStr) return null;
                     const isAttending = m.attendance?.includes(dateStr);
                     return (<button key={p.id || Math.random()} onClick={(e) => { e.stopPropagation(); toggleAttendance(m.id, dateStr); }} className={`flex flex-col items-center justify-center w-9 h-9 rounded-xl border transition active:scale-90 ${isAttending ? 'bg-[#E8F1E9] border-[#CFE3D1] text-[#5F7A61]' : 'bg-[#F7F2F2] border-[#E8E0E0] text-[#A69898]'}`}><span className="text-[9px] font-bold leading-none">{new Date(p.date).getDate()}</span>{isAttending ? <CheckCircle2 size={10}/> : <XCircle size={10}/>}</button>);
@@ -628,9 +635,7 @@ const SessionLogManager = ({ sessions, practices, members, settings, db, appId, 
   );
 };
 
-// --- Session Detail, TrackList, PracticeFeeCalculator, MiscFeeCalculator, AlcoholManager, TechView, AdminDashboard (這些組件請保持與之前版本一致) ---
-// (為節省篇幅，我將這些組件完整貼在下方，確保無誤)
-
+// --- Session Detail ---
 const SessionDetail = ({ session, members, settings, onBack, db, role, user }) => {
   const [tab, setTab] = useState('tracks'); 
   const [funNotes, setFunNotes] = useState(session.funNotes || "");
@@ -686,6 +691,7 @@ const SessionDetail = ({ session, members, settings, onBack, db, role, user }) =
   );
 };
 
+// --- TrackList (修復留言功能) ---
 const TrackList = ({ session, db, user, role }) => {
   const [expandedTrack, setExpandedTrack] = useState(null);
   const [newTrackName, setNewTrackName] = useState("");
@@ -727,6 +733,7 @@ const TrackList = ({ session, db, user, role }) => {
   );
 };
 
+// --- PracticeFeeCalculator ---
 const PracticeFeeCalculator = ({ session, members, settings, role, db }) => {
   const [selectedIds, setSelectedIds] = useState(session.attendance || []); 
   const [hours, setHours] = useState(2);
@@ -751,6 +758,7 @@ const PracticeFeeCalculator = ({ session, members, settings, role, db }) => {
   );
 };
 
+// --- MiscFeeCalculator ---
 const MiscFeeCalculator = ({ session, members, db }) => {
   const [items, setItems] = useState(session.miscExpenses || []); 
   const [newItem, setNewItem] = useState({ item: '', amount: '', payerId: '', splitters: [] });
