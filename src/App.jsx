@@ -63,7 +63,6 @@ const stringToColor = (str) => {
   return MORANDI_COLORS[Math.abs(hash) % MORANDI_COLORS.length];
 };
 
-// 修正 1: 確保 getMemberStyle 函式定義正確且在全域可存取
 const getMemberStyle = (name) => {
     return { 
         color: stringToColor(name), 
@@ -181,7 +180,7 @@ const App = () => {
   const [role, setRole] = useState({ admin: false, finance: false, alcohol: false });
 
   const [members, setMembers] = useState([]);
-  const [membersLoaded, setMembersLoaded] = useState(false); // 修正 4: 新增狀態來追蹤成員載入
+  const [membersLoaded, setMembersLoaded] = useState(false); // 追蹤成員是否載入完成
   const [logs, setLogs] = useState([]);
   const [alcohols, setAlcohols] = useState([]);
   const [songs, setSongs] = useState([]);
@@ -192,7 +191,15 @@ const App = () => {
   // Auth 監聽
   useEffect(() => {
     if (auth) {
-      getRedirectResult(auth).catch(e => console.log(e));
+      // 處理 redirect 登入回來的結果 (這是手機版登入成功的關鍵)
+      getRedirectResult(auth)
+        .then((result) => {
+           if (result && result.user) {
+             console.log("Redirect login success:", result.user);
+           }
+        })
+        .catch(e => console.log("Redirect login error:", e));
+
       const unsubAuth = onAuthStateChanged(auth, async (u) => {
         setUser(u);
         if (!u && IS_CANVAS) setTimeout(() => setUser({ uid: 'demo', displayName: '體驗帳號', photoURL: null, email: 'demo@test.com' }), 1000);
@@ -202,9 +209,9 @@ const App = () => {
     } else { setLoading(false); }
   }, []);
 
-  // 權限與白名單檢查 (修正：確保成員名單載入後才判斷)
+  // 權限與白名單檢查
   useEffect(() => {
-    if (user && membersLoaded) { // 修正 4: 檢查 membersLoaded
+    if (user && membersLoaded) { 
        const normalize = (str) => (str || '').trim().toLowerCase();
        const userEmail = normalize(user.email);
        const adminEmails = ADMIN_EMAILS.map(normalize);
@@ -220,10 +227,8 @@ const App = () => {
           }
        }
 
-       // 職位權限分配
        const financeMember = members.find(m => m.realName === ROLE_FINANCE_NAME || m.nickname === ROLE_FINANCE_NAME);
        const isFinance = isAdmin || (financeMember && normalize(financeMember.email) === userEmail);
-       
        const alcoholMember = members.find(m => m.realName === ROLE_ALCOHOL_NAME || m.nickname === ROLE_ALCOHOL_NAME);
        const isAlcohol = isAdmin || (alcoholMember && normalize(alcoholMember.email) === userEmail);
 
@@ -247,7 +252,7 @@ const App = () => {
     if (!db || !user) return;
     const unsubMembers = onSnapshot(getCollectionRef(db, 'members'), (snap) => {
         setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-        setMembersLoaded(true); // 修正 4: 標記載入完成
+        setMembersLoaded(true);
     }, (e) => console.warn(e));
     
     const unsubLogs = onSnapshot(getCollectionRef(db, 'logs'), (snap) => setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => new Date(b.date) - new Date(a.date))));
@@ -277,10 +282,25 @@ const App = () => {
     };
   }, [user]);
 
+  // ⚠️ 關鍵修正：行動裝置偵測與登入策略
   const handleLogin = async () => {
-    try { await signInWithPopup(auth, googleProvider); } 
-    catch (err) { console.warn("Popup failed"); signInWithRedirect(auth, googleProvider); }
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    
+    if (isMobile) {
+      // 手機版直接使用 Redirect，避免 Popup 被瀏覽器阻擋
+      console.log("Mobile detected, using signInWithRedirect");
+      signInWithRedirect(auth, googleProvider);
+    } else {
+      // 電腦版使用 Popup
+      try { 
+        await signInWithPopup(auth, googleProvider); 
+      } catch (err) { 
+        console.warn("Popup failed, fallback to redirect", err);
+        signInWithRedirect(auth, googleProvider); 
+      }
+    }
   };
+  
   const handleLogout = async () => { await signOut(auth); setUser(null); };
 
   const renderContent = () => {
@@ -364,19 +384,12 @@ const NavBtn = ({ id, icon: Icon, label, active, set }) => (
 // --- 1. Dashboard ---
 const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) => {
   const [editingPractice, setEditingPractice] = useState(false);
-  
-  // 修正 2: 狀態同步
   const [practices, setPractices] = useState(generalData.practices || []);
-  useEffect(() => {
-     if(generalData.practices) setPractices(generalData.practices);
-  }, [generalData]);
-
   const [expandedMember, setExpandedMember] = useState(null);
   const [editingMember, setEditingMember] = useState(null); 
   
   const now = new Date();
   
-  // 安全的日期排序 (防呆修正)
   const sortedPractices = [...practices]
     .filter(p => p && p.date) 
     .map(p => ({...p, dateObj: new Date(p.date), endObj: p.endTime ? new Date(p.endTime) : new Date(new Date(p.date).getTime() + 2*60*60*1000) }))
@@ -388,7 +401,6 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
   const isValidDate = !isNaN(nextDateObj.getTime());
   const diffDays = isValidDate ? Math.ceil((nextDateObj - now) / (1000 * 60 * 60 * 24)) : 0; 
 
-  // 修正：儲存時才更新 Firebase
   const handleUpdatePractices = async (newPractices) => { 
     if (!db) return; 
     await updateDoc(getDocRef(db, 'general', 'info'), { practices: newPractices }); 
@@ -419,13 +431,41 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
   const handleSaveMember = async (data) => { if (!db) return; data.id ? await updateDoc(getDocRef(db, 'members', data.id), data) : await addDoc(getCollectionRef(db, 'members'), data); setEditingMember(null); };
   const handleDeleteMember = async (id) => { if (confirm("確定要刪除這位團員嗎？")) { await deleteDoc(getDocRef(db, 'members', id)); } };
   
-  // 修正 3: URL 語法
   const addToCalendarUrl = () => {
     if (!isValidDate) return "#";
     const start = nextDateObj.toISOString().replace(/-|:|\.\d\d\d/g, "");
     const end = nextPractice.endTime ? new Date(nextPractice.endTime).toISOString().replace(/-|:|\.\d\d\d/g, "") : new Date(nextDateObj.getTime() + 2*60*60*1000).toISOString().replace(/-|:|\.\d\d\d/g, "");
     return `https://www.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(nextPractice.title)}&dates=${start}/${end}&location=${encodeURIComponent(nextPractice.location)}`;
   };
+
+  const renderPracticeEditor = () => (
+    <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
+      <div className="bg-white p-6 rounded-3xl w-full max-w-sm space-y-4 max-h-[80vh] overflow-y-auto">
+        <h3 className="font-bold text-lg text-[#725E77]">設定本月練團時間</h3>
+        {practices.map((p, idx) => (
+          <div key={idx} className="bg-[#FDFBF7] p-3 rounded-xl border border-[#E0E0D9] space-y-2 relative">
+             <button onClick={() => setPractices(practices.filter((_, i) => i !== idx))} className="absolute top-2 right-2 text-[#BC8F8F]"><MinusCircle size={16}/></button>
+             <div className="text-xs text-[#C5B8BF] font-bold">開始</div>
+             <input type="datetime-local" className="w-full bg-white p-2 rounded-lg text-sm" value={p.date} onChange={e => {
+               const newP = [...practices]; newP[idx].date = e.target.value; setPractices(newP);
+             }} />
+             <div className="text-xs text-[#C5B8BF] font-bold">結束</div>
+             <input type="datetime-local" className="w-full bg-white p-2 rounded-lg text-sm" value={p.endTime || ''} onChange={e => {
+               const newP = [...practices]; newP[idx].endTime = e.target.value; setPractices(newP);
+             }} />
+             <input type="text" className="w-full bg-white p-2 rounded-lg text-sm" placeholder="標題" value={p.title} onChange={e => {
+               const newP = [...practices]; newP[idx].title = e.target.value; setPractices(newP);
+             }} />
+             <input type="text" className="w-full bg-white p-2 rounded-lg text-sm" placeholder="地點" value={p.location} onChange={e => {
+               const newP = [...practices]; newP[idx].location = e.target.value; setPractices(newP);
+             }} />
+          </div>
+        ))}
+        <button onClick={() => setPractices([...practices, { date: new Date().toISOString(), endTime: '', title: '新練團', location: '圓頭音樂' }])} className="w-full py-2 border-2 border-dashed border-[#77ABC0] text-[#77ABC0] rounded-xl font-bold flex justify-center items-center gap-1"><Plus size={16}/> 增加場次</button>
+        <div className="flex gap-2 pt-2"><button onClick={() => setEditingPractice(false)} className="flex-1 p-3 rounded-xl text-slate-400 font-bold">取消</button><button onClick={handleUpdatePractices} className="flex-1 p-3 rounded-xl bg-[#77ABC0] text-white font-bold shadow-lg">儲存設定</button></div>
+      </div>
+    </div>
+  );
 
   return (
     <div className="space-y-5 animate-in fade-in slide-in-from-bottom-4">
@@ -485,7 +525,7 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
             <div key={m.id} onClick={() => setExpandedMember(expandedMember === m.id ? null : m.id)} className={`bg-white p-4 rounded-2xl border shadow-sm transition-all cursor-pointer ${expandedMember === m.id ? 'border-[#CBABCA] ring-1 ring-[#CBABCA]/30' : 'border-[#E0E0D9]'}`}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  {/* 修正 1: 頭像改回文字縮寫 */}
+                  {/* 頭像改回文字縮寫 */}
                   <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white font-bold text-lg border-2 border-white shadow-sm overflow-hidden" style={{backgroundColor: style.color}}>
                     {m.nickname?.[0] || 'M'}
                   </div>
