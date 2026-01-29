@@ -11,19 +11,22 @@ import {
   Wallet, Receipt, Coffee, Gift, Zap, LayoutGrid, List,
   PartyPopper, Headphones, Speaker, Star, Image as ImageIcon, Disc,
   Ghost, Pencil, Trash2, Lock, Save, MinusCircle, FilePlus, AlertTriangle,
-  Database, Download, Filter, Search, Clock, ListPlus, Edit, CheckSquare,
-  Cat, Dog, Bird, Rabbit, Turtle, Fish // 新增動物圖示
+  Database, Download, Filter, Search, Clock, ListPlus, CheckSquare,
+  Cat, Dog, Bird, Rabbit, Turtle, Fish 
 } from 'lucide-react';
 
 // ==========================================
 // 🔐 權限管理區
 // ==========================================
 
+// 1. 超級管理員 (最後的救援鑰匙，保留您的 Email)
+// ⚠️ 一般團員已不需要寫在這裡，系統會自動對照「成員名單」資料庫
 const ADMIN_EMAILS = [
   "jamie.chou0917@gmail.com",
   "demo@test.com"
 ];
 
+// 2. 特殊職位名稱 (需與團員名單中的本名/暱稱一致)
 const ROLE_FINANCE_NAME = "陳昱維"; 
 const ROLE_ALCOHOL_NAME = "李家賢"; 
 
@@ -52,6 +55,7 @@ const BandLogo = () => (
   </div>
 );
 
+// --- 工具: 安全複製 ---
 const secureCopy = (text) => {
   const textArea = document.createElement("textarea");
   textArea.value = text;
@@ -69,17 +73,27 @@ const secureCopy = (text) => {
   }
 };
 
+// --- 工具: 匯出 CSV ---
 const exportToCSV = (data, filename) => {
-  if (!data || !data.length) { alert("沒有資料可匯出"); return; }
+  if (!data || !data.length) {
+    alert("沒有資料可匯出");
+    return;
+  }
   const keys = Object.keys(data[0]);
-  const csvContent = '\uFEFF' + keys.join(',') + '\n' +
-    data.map(row => keys.map(k => {
+  const separator = ',';
+  const csvContent =
+    '\uFEFF' + 
+    keys.join(separator) +
+    '\n' +
+    data.map(row => {
+      return keys.map(k => {
         let cell = row[k] === null || row[k] === undefined ? '' : row[k];
         cell = cell.toString().replace(/"/g, '""');
         if (cell.search(/("|,|\n)/g) >= 0) cell = `"${cell}"`;
         return cell;
-      }).join(',')
-    ).join('\n');
+      }).join(separator);
+    }).join('\n');
+
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
   const link = document.createElement('a');
   if (link.download !== undefined) {
@@ -129,6 +143,7 @@ const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__f
 const IS_CANVAS = typeof __firebase_config !== 'undefined';
 const storageAppId = IS_CANVAS ? (typeof __app_id !== 'undefined' ? __app_id : 'band-manager-preview') : null;
 
+// Helper - 修正路徑參數
 const getCollectionRef = (db, name) => IS_CANVAS && storageAppId ? collection(db, 'artifacts', storageAppId, 'public', 'data', name) : collection(db, name);
 const getDocRef = (db, name, id) => IS_CANVAS && storageAppId ? doc(db, 'artifacts', storageAppId, 'public', 'data', name, id) : doc(db, name, id);
 
@@ -168,6 +183,7 @@ const App = () => {
   
   const appId = USER_CONFIG.appId; 
 
+  // Auth 監聽
   useEffect(() => {
     if (auth) {
       getRedirectResult(auth).catch(e => console.log(e));
@@ -180,22 +196,29 @@ const App = () => {
     } else { setLoading(false); }
   }, []);
 
+  // 權限與白名單檢查 (動態連動版)
   useEffect(() => {
     if (user) {
-      const userEmail = user.email;
-      const isAdmin = ADMIN_EMAILS.includes(userEmail);
+      // 1. 先確認是否為超級管理員
+      const isAdmin = ADMIN_EMAILS.includes(user.email);
+      
+      // 2. 只有在成員名單載入後 (length > 0) 才進行白名單檢查
       if (!IS_CANVAS && !isAdmin && members.length > 0) {
-         const isMember = members.some(m => m.email === userEmail);
+         const isMember = members.some(m => m.email === user.email);
          if (!isMember) {
-            alert(`⛔ 您的 Email (${userEmail}) 不在團員名單中，無法存取。\n請聯繫團長加入名單。`);
+            alert(`⛔ 抱歉，您的 Email (${user.email}) 不在團員名單中。\n請聯繫團長將您的 Email 加入成員名單。`);
             signOut(auth).then(() => setUser(null));
             return;
          }
       }
+
+      // 3. 職位權限分配
       const financeMember = members.find(m => m.realName === ROLE_FINANCE_NAME || m.nickname === ROLE_FINANCE_NAME);
-      const isFinance = isAdmin || (financeMember && financeMember.email === userEmail);
+      const isFinance = isAdmin || (financeMember && financeMember.email === user.email);
+      
       const alcoholMember = members.find(m => m.realName === ROLE_ALCOHOL_NAME || m.nickname === ROLE_ALCOHOL_NAME);
-      const isAlcohol = isAdmin || (alcoholMember && alcoholMember.email === userEmail);
+      const isAlcohol = isAdmin || (alcoholMember && alcoholMember.email === user.email);
+
       setRole({ admin: isAdmin, finance: isFinance, alcohol: isAlcohol });
       setLoading(false);
     } else {
@@ -204,6 +227,7 @@ const App = () => {
     }
   }, [user, members]);
 
+  // Firestore 資料監聽
   useEffect(() => {
     if (!db || !user) return;
     const unsubMembers = onSnapshot(getCollectionRef(db, 'members'), (snap) => setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
@@ -228,8 +252,10 @@ const App = () => {
   const handleLogout = async () => { await signOut(auth); setUser(null); };
 
   const renderContent = () => {
-    if (!generalData && activeTab === 'dashboard') return <div className="h-full flex items-center justify-center text-slate-400"><Loader2 className="animate-spin"/> 資料同步中...</div>;
+    // 防呆處理：若資料尚未載入或錯誤，提供預設值避免白頁
     const data = generalData || DEFAULT_GENERAL_DATA;
+    // 若正在載入且非預覽，顯示 Loading
+    if (!generalData && !IS_CANVAS) return <div className="h-full flex items-center justify-center text-slate-400"><Loader2 className="animate-spin mr-2"/> 資料讀取中...</div>;
 
     switch (activeTab) {
       case 'dashboard': return <DashboardView members={members} generalData={data} alcoholCount={alcohols.length} db={db} role={role} user={user} />;
@@ -307,12 +333,21 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
   const [editingMember, setEditingMember] = useState(null); 
   
   const now = new Date();
-  const sortedPractices = [...practices].map(p => ({...p, dateObj: new Date(p.date)})).sort((a,b) => a.dateObj - b.dateObj);
+  
+  // 安全的日期排序 (防呆修正)
+  const sortedPractices = [...practices]
+    .filter(p => p && p.date) // 過濾無效資料
+    .map(p => ({...p, dateObj: new Date(p.date), endObj: p.endTime ? new Date(p.endTime) : new Date(new Date(p.date).getTime() + 2*60*60*1000) }))
+    .sort((a,b) => a.dateObj - b.dateObj);
+  
   const nextPractice = sortedPractices.find(p => p.dateObj >= now) || sortedPractices[sortedPractices.length - 1] || { date: new Date().toISOString(), title: '尚未安排', location: '圓頭音樂' };
-  const isValidDate = !isNaN(new Date(nextPractice.date).getTime());
-  const diffDays = isValidDate ? Math.ceil((new Date(nextPractice.date) - now) / (1000 * 60 * 60 * 24)) : 0; 
+  
+  const nextDateObj = new Date(nextPractice.date);
+  const isValidDate = !isNaN(nextDateObj.getTime());
+  const diffDays = isValidDate ? Math.ceil((nextDateObj - now) / (1000 * 60 * 60 * 24)) : 0; 
 
   const handleUpdatePractices = async () => { if (!db) return; await updateDoc(getDocRef(db, 'general', 'info'), { practices }); setEditingPractice(false); };
+  
   const toggleAttendance = async (memberId, dateStr) => {
     const member = members.find(m => m.id === memberId);
     if (!member) return;
@@ -322,18 +357,41 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
     const newAtt = current.includes(dateStr) ? current.filter(d => d !== dateStr) : [...current, dateStr];
     await updateDoc(getDocRef(db, 'members', memberId), { attendance: newAtt });
   };
+  
   const handleSaveMember = async (data) => { if (!db) return; data.id ? await updateDoc(getDocRef(db, 'members', data.id), data) : await addDoc(getCollectionRef(db, 'members'), data); setEditingMember(null); };
   const handleDeleteMember = async (id) => { if (confirm("確定刪除？")) await deleteDoc(getDocRef(db, 'members', id)); };
+  
   const addToCalendarUrl = () => {
     if (!isValidDate) return "#";
-    const start = new Date(nextPractice.date).toISOString().replace(/-|:|\.\d\d\d/g, "");
+    const start = nextDateObj.toISOString().replace(/-|:|\.\d\d\d/g, "");
     const end = nextPractice.endTime ? new Date(nextPractice.endTime).toISOString().replace(/-|:|\.\d\d\d/g, "") : start;
     return `https://www.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(nextPractice.title)}&dates=${start}/${end}&location=${encodeURIComponent(nextPractice.location)}`;
   };
 
+  const renderPracticeEditor = () => (
+    <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
+      <div className="bg-white p-6 rounded-3xl w-full max-w-sm space-y-4 max-h-[80vh] overflow-y-auto">
+        <h3 className="font-bold text-lg text-[#725E77]">設定本月練團時間</h3>
+        {practices.map((p, idx) => (
+          <div key={idx} className="bg-[#FDFBF7] p-3 rounded-xl border border-[#E0E0D9] space-y-2 relative">
+             <button onClick={() => setPractices(practices.filter((_, i) => i !== idx))} className="absolute top-2 right-2 text-[#BC8F8F]"><MinusCircle size={16}/></button>
+             <div className="text-xs text-[#C5B8BF] font-bold">開始</div>
+             <input type="datetime-local" className="w-full bg-white p-2 rounded-lg text-sm" value={p.date} onChange={e => { const newP = [...practices]; newP[idx].date = e.target.value; setPractices(newP); }} />
+             <div className="text-xs text-[#C5B8BF] font-bold">結束</div>
+             <input type="datetime-local" className="w-full bg-white p-2 rounded-lg text-sm" value={p.endTime || ''} onChange={e => { const newP = [...practices]; newP[idx].endTime = e.target.value; setPractices(newP); }} />
+             <input type="text" className="w-full bg-white p-2 rounded-lg text-sm" placeholder="標題" value={p.title} onChange={e => { const newP = [...practices]; newP[idx].title = e.target.value; setPractices(newP); }} />
+             <input type="text" className="w-full bg-white p-2 rounded-lg text-sm" placeholder="地點" value={p.location} onChange={e => { const newP = [...practices]; newP[idx].location = e.target.value; setPractices(newP); }} />
+          </div>
+        ))}
+        <button onClick={() => setPractices([...practices, { date: new Date().toISOString(), endTime: '', title: '新練團', location: '圓頭音樂' }])} className="w-full py-2 border-2 border-dashed border-[#77ABC0] text-[#77ABC0] rounded-xl font-bold flex justify-center items-center gap-1"><Plus size={16}/> 增加場次</button>
+        <div className="flex gap-2 pt-2"><button onClick={() => setEditingPractice(false)} className="flex-1 p-3 rounded-xl text-slate-400 font-bold">取消</button><button onClick={handleUpdatePractices} className="flex-1 p-3 rounded-xl bg-[#77ABC0] text-white font-bold shadow-lg">儲存設定</button></div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="space-y-5 animate-in fade-in slide-in-from-bottom-4">
-      {editingPractice && <PracticeEditor practices={practices} setPractices={setPractices} onClose={()=>setEditingPractice(false)} onSave={handleUpdatePractices} />}
+      {editingPractice && renderPracticeEditor()}
       {editingMember && <MemberEditModal member={editingMember} onClose={() => setEditingMember(null)} onSave={handleSaveMember} />}
 
       <div className="bg-gradient-to-br from-[#77ABC0] to-[#6E7F9B] rounded-[32px] p-6 text-white shadow-lg shadow-[#77ABC0]/20 relative overflow-hidden group">
@@ -378,9 +436,10 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
                 </div>
                 <div className="flex gap-1.5 overflow-x-auto max-w-[120px] scrollbar-hide">
                   {practices.map(p => {
-                    const dateStr = p.date.split('T')[0];
+                    const dateStr = p.date ? p.date.split('T')[0] : ''; // 防呆
+                    if (!dateStr) return null;
                     const isAttending = m.attendance?.includes(dateStr);
-                    return (<button key={p.id} onClick={(e) => { e.stopPropagation(); toggleAttendance(m.id, dateStr); }} className={`flex flex-col items-center justify-center w-9 h-9 rounded-xl border transition active:scale-90 ${isAttending ? 'bg-[#E8F1E9] border-[#CFE3D1] text-[#5F7A61]' : 'bg-[#F7F2F2] border-[#E8E0E0] text-[#A69898]'}`}><span className="text-[9px] font-bold leading-none">{new Date(p.date).getDate()}</span>{isAttending ? <CheckCircle2 size={10}/> : <XCircle size={10}/>}</button>);
+                    return (<button key={p.id || Math.random()} onClick={(e) => { e.stopPropagation(); toggleAttendance(m.id, dateStr); }} className={`flex flex-col items-center justify-center w-9 h-9 rounded-xl border transition active:scale-90 ${isAttending ? 'bg-[#E8F1E9] border-[#CFE3D1] text-[#5F7A61]' : 'bg-[#F7F2F2] border-[#E8E0E0] text-[#A69898]'}`}><span className="text-[9px] font-bold leading-none">{new Date(p.date).getDate()}</span>{isAttending ? <CheckCircle2 size={10}/> : <XCircle size={10}/>}</button>);
                   })}
                 </div>
               </div>
@@ -398,27 +457,7 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
   );
 };
 
-const PracticeEditor = ({ practices, setPractices, onClose, onSave }) => (
-    <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
-      <div className="bg-white p-6 rounded-3xl w-full max-w-sm space-y-4 max-h-[80vh] overflow-y-auto">
-        <h3 className="font-bold text-lg text-[#725E77]">設定本月練團時間</h3>
-        {practices.map((p, idx) => (
-          <div key={idx} className="bg-[#FDFBF7] p-3 rounded-xl border border-[#E0E0D9] space-y-2 relative">
-             <button onClick={() => setPractices(practices.filter((_, i) => i !== idx))} className="absolute top-2 right-2 text-[#BC8F8F]"><MinusCircle size={16}/></button>
-             <div className="text-xs text-[#C5B8BF] font-bold">開始</div>
-             <input type="datetime-local" className="w-full bg-white p-2 rounded-lg text-sm" value={p.date} onChange={e => { const newP = [...practices]; newP[idx].date = e.target.value; setPractices(newP); }} />
-             <div className="text-xs text-[#C5B8BF] font-bold">結束</div>
-             <input type="datetime-local" className="w-full bg-white p-2 rounded-lg text-sm" value={p.endTime || ''} onChange={e => { const newP = [...practices]; newP[idx].endTime = e.target.value; setPractices(newP); }} />
-             <input type="text" className="w-full bg-white p-2 rounded-lg text-sm" placeholder="標題" value={p.title} onChange={e => { const newP = [...practices]; newP[idx].title = e.target.value; setPractices(newP); }} />
-             <input type="text" className="w-full bg-white p-2 rounded-lg text-sm" placeholder="地點" value={p.location} onChange={e => { const newP = [...practices]; newP[idx].location = e.target.value; setPractices(newP); }} />
-          </div>
-        ))}
-        <button onClick={() => setPractices([...practices, { date: new Date().toISOString(), endTime: '', title: '新練團', location: '圓頭音樂' }])} className="w-full py-2 border-2 border-dashed border-[#77ABC0] text-[#77ABC0] rounded-xl font-bold flex justify-center items-center gap-1"><Plus size={16}/> 增加場次</button>
-        <div className="flex gap-2 pt-2"><button onClick={onClose} className="flex-1 p-3 rounded-xl text-slate-400 font-bold">取消</button><button onClick={onSave} className="flex-1 p-3 rounded-xl bg-[#77ABC0] text-white font-bold shadow-lg">儲存設定</button></div>
-      </div>
-    </div>
-);
-
+// --- Member Edit Modal ---
 const MemberEditModal = ({ member, onClose, onSave }) => {
   const [form, setForm] = useState(member || {});
   return (
@@ -442,8 +481,13 @@ const MemberEditModal = ({ member, onClose, onSave }) => {
 // --- 2. 日誌管理器 ---
 const SessionLogManager = ({ sessions, practices, members, settings, db, role, user }) => {
   const [activeSessionId, setActiveSessionId] = useState(null);
+  
+  // 防呆：確保 practices 是陣列
+  const safePractices = Array.isArray(practices) ? practices : [];
   const existingDates = sessions.map(s => s.date);
-  const pendingPractices = practices.filter(p => {
+
+  const pendingPractices = safePractices.filter(p => {
+      if(!p || !p.date) return false;
       const pDate = p.date.split('T')[0];
       return !existingDates.includes(pDate);
   }).sort((a,b) => new Date(a.date) - new Date(b.date));
@@ -481,7 +525,7 @@ const SessionLogManager = ({ sessions, practices, members, settings, db, role, u
       </div>
       
       {role.admin && pendingPractices.map(p => (
-        <button key={p.id} onClick={() => handleCreate(p.date.split('T')[0], p.location)} className="w-full p-4 rounded-[28px] border-2 border-dashed border-[#CBABCA] bg-[#FDFBF7] flex items-center justify-between text-[#CBABCA] hover:bg-[#FFF5F7] transition group">
+        <button key={p.id || Math.random()} onClick={() => handleCreate(p.date.split('T')[0], p.location)} className="w-full p-4 rounded-[28px] border-2 border-dashed border-[#CBABCA] bg-[#FDFBF7] flex items-center justify-between text-[#CBABCA] hover:bg-[#FFF5F7] transition group">
           <div className="flex items-center gap-3"><div className="bg-[#F2D7DD]/30 p-2 rounded-full group-hover:scale-110 transition text-[#CBABCA]"><Plus size={20}/></div><div className="text-left"><div className="font-bold text-lg text-[#CBABCA]">{new Date(p.date).toLocaleDateString()} 待補</div><div className="text-xs opacity-70 text-[#C5B8BF]">{p.title}</div></div></div>
           <ChevronDown className="-rotate-90 opacity-50 text-[#C5B8BF]" />
         </button>
@@ -513,7 +557,10 @@ const SessionLogManager = ({ sessions, practices, members, settings, db, role, u
   );
 };
 
-// --- 日誌詳情 ---
+// --- Session Detail, TrackList, PracticeFeeCalculator, MiscFeeCalculator, AlcoholManager, AlcoholFeeCalculator, TechView, AdminDashboard 等元件保持不變 (已在前面修正過) ---
+// (為節省篇幅，這部分代碼與 v10.0 相同，請確保複製完整代碼)
+// 這裡僅列出 SessionDetail 之後的代碼，請確保合併
+
 const SessionDetail = ({ session, members, settings, onBack, db, role, user }) => {
   const [tab, setTab] = useState('tracks'); 
   const [funNotes, setFunNotes] = useState(session.funNotes || "");
@@ -523,9 +570,8 @@ const SessionDetail = ({ session, members, settings, onBack, db, role, user }) =
   const handleUpdateNotes = async () => { if (!db) return; await updateDoc(getDocRef(db, 'logs', session.id), { funNotes }); };
   const handleUpdateLocation = async () => { if (!db) return; await updateDoc(getDocRef(db, 'logs', session.id), { location }); setEditingLocation(false); };
   
-  // 新增：單次練團出席設定
   const toggleSessionAttendance = async (memberId) => {
-     const currentAtt = session.attendance || []; // 這場誰來了
+     const currentAtt = session.attendance || []; 
      const newAtt = currentAtt.includes(memberId) ? currentAtt.filter(id => id !== memberId) : [...currentAtt, memberId];
      await updateDoc(getDocRef(db, 'logs', session.id), { attendance: newAtt });
   };
@@ -547,8 +593,6 @@ const SessionDetail = ({ session, members, settings, onBack, db, role, user }) =
           <Smile size={16} className="text-[#F1CEBA] shrink-0 mt-0.5"/>
           <textarea className="bg-transparent w-full text-xs font-bold text-[#725E77] outline-none resize-none h-auto min-h-[40px]" value={funNotes} onChange={e => setFunNotes(e.target.value)} onBlur={handleUpdateNotes} placeholder="輸入不負責任備註..."/>
         </div>
-        
-        {/* 新增出席名單勾選區 */}
         <div className="mt-4 pt-3 border-t border-[#F2D7DD]/30">
           <div className="text-[10px] font-bold text-[#C5B8BF] mb-2 uppercase">👥 出席名單設定</div>
           <div className="flex flex-wrap gap-2">
@@ -558,7 +602,6 @@ const SessionDetail = ({ session, members, settings, onBack, db, role, user }) =
           </div>
         </div>
       </div>
-
       <div className="flex bg-[#E0E0D9]/50 p-1 rounded-xl mb-6">
         {['tracks', 'practice-fee', 'misc-fee'].map(t => (
             <button key={t} onClick={() => setTab(t)} className={`flex-1 py-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1 ${tab === t ? 'bg-white shadow text-[#77ABC0]' : 'text-[#C5B8BF]'}`}>{t === 'tracks' ? '曲目' : t === 'practice-fee' ? '練團費' : '雜支'}</button>
@@ -573,54 +616,16 @@ const SessionDetail = ({ session, members, settings, onBack, db, role, user }) =
   );
 };
 
-// --- TrackList (修復留言) ---
 const TrackList = ({ session, db, user, role }) => {
   const [expandedTrack, setExpandedTrack] = useState(null);
   const [newTrackName, setNewTrackName] = useState("");
   const [newComment, setNewComment] = useState("");
   const tracks = session.tracks || [];
 
-  const handleAddTrack = async () => {
-    if (!newTrackName.trim() || !db) return;
-    const newTrack = { id: Date.now(), title: newTrackName, status: 'new', link: '', comments: [] };
-    await updateDoc(getDocRef(db, 'logs', session.id), { tracks: [...tracks, newTrack] });
-    setNewTrackName("");
-  };
-
-  const handleAddComment = async (trackId) => {
-    if (!newComment.trim()) return;
-    const updatedTracks = tracks.map(t => {
-      if (t.id === trackId) {
-        return { ...t, comments: [...(t.comments || []), { user: user?.displayName || '團員', text: newComment, uid: user?.uid }] };
-      } return t;
-    });
-    await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks });
-    setNewComment("");
-  };
-
-  const handleDeleteComment = async (trackId, commentIdx) => {
-      if(!confirm("刪除留言?")) return;
-      const updatedTracks = tracks.map(t => {
-        if (t.id === trackId) {
-            const newComments = [...t.comments];
-            newComments.splice(commentIdx, 1);
-            return { ...t, comments: newComments };
-        } return t;
-      });
-      await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks });
-  };
-  
-  // 新增：編輯留言
-  const handleEditComment = async (trackId, commentIdx, newText) => {
-      const updatedTracks = tracks.map(t => {
-        if (t.id === trackId) {
-            const newComments = [...t.comments];
-            newComments[commentIdx].text = newText;
-            return { ...t, comments: newComments };
-        } return t;
-      });
-      await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks });
-  };
+  const handleAddTrack = async () => { if (!newTrackName.trim() || !db) return; const newTrack = { id: Date.now(), title: newTrackName, status: 'new', link: '', comments: [] }; await updateDoc(getDocRef(db, 'logs', session.id), { tracks: [...tracks, newTrack] }); setNewTrackName(""); };
+  const handleAddComment = async (trackId) => { if (!newComment.trim()) return; const updatedTracks = tracks.map(t => { if (t.id === trackId) { return { ...t, comments: [...(t.comments || []), { user: user?.displayName || '團員', text: newComment, uid: user?.uid }] }; } return t; }); await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks }); setNewComment(""); };
+  const handleDeleteComment = async (trackId, commentIdx) => { if(!confirm("刪除留言?")) return; const updatedTracks = tracks.map(t => { if (t.id === trackId) { const newComments = [...t.comments]; newComments.splice(commentIdx, 1); return { ...t, comments: newComments }; } return t; }); await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks }); };
+  const handleEditComment = async (trackId, commentIdx, newText) => { const updatedTracks = tracks.map(t => { if (t.id === trackId) { const newComments = [...t.comments]; newComments[commentIdx].text = newText; return { ...t, comments: newComments }; } return t; }); await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks }); };
 
   return (
     <div className="p-3 space-y-3">
@@ -636,172 +641,82 @@ const TrackList = ({ session, db, user, role }) => {
                   <div key={i} className="text-xs bg-[#FDFBF7] p-2 rounded-lg flex justify-between items-start group">
                       <div><span className="font-bold text-[#725E77]">{c.user}:</span> {c.text}</div>
                       {(c.uid === user?.uid || role.admin) && (
-                          <div className="flex gap-1">
-                             <button onClick={() => { const val = prompt("編輯留言", c.text); if(val) handleEditComment(t.id, i, val); }} className="text-[#77ABC0] opacity-0 group-hover:opacity-100"><Pencil size={12}/></button>
-                             <button onClick={() => handleDeleteComment(t.id, i)} className="text-[#BC8F8F] opacity-0 group-hover:opacity-100"><Trash2 size={12}/></button>
-                          </div>
+                          <div className="flex gap-1"><button onClick={() => { const val = prompt("編輯留言", c.text); if(val) handleEditComment(t.id, i, val); }} className="text-[#77ABC0] opacity-0 group-hover:opacity-100"><Pencil size={12}/></button><button onClick={() => handleDeleteComment(t.id, i)} className="text-[#BC8F8F] opacity-0 group-hover:opacity-100"><Trash2 size={12}/></button></div>
                       )}
                   </div>
               ))}
-              <div className="flex gap-2">
-                 <input className="w-full bg-[#FDFBF7] text-xs p-2 rounded-lg outline-none text-[#725E77]" placeholder="輸入留言..." value={newComment} onChange={e => setNewComment(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAddComment(t.id)} />
-                 <button onClick={() => handleAddComment(t.id)} className="text-[#77ABC0]"><Check size={16}/></button>
-              </div>
+              <div className="flex gap-2"><input className="w-full bg-[#FDFBF7] text-xs p-2 rounded-lg outline-none text-[#725E77]" placeholder="輸入留言..." value={newComment} onChange={e => setNewComment(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAddComment(t.id)} /><button onClick={() => handleAddComment(t.id)} className="text-[#77ABC0]"><Check size={16}/></button></div>
             </div>
           )}
         </div>
       ))}
-      <div className="flex gap-2">
-        <input className="flex-1 bg-[#FDFBF7] border border-[#E0E0D9] rounded-xl px-3 text-xs outline-none" placeholder="輸入新歌名..." value={newTrackName} onChange={e => setNewTrackName(e.target.value)} />
-        <button onClick={handleAddTrack} className="px-4 py-3 bg-[#77ABC0]/10 text-[#77ABC0] font-bold text-xs flex items-center justify-center gap-1 border border-dashed border-[#77ABC0]/50 hover:bg-[#77ABC0]/20 rounded-2xl transition"><Plus size={14}/> 新增</button>
-      </div>
+      <div className="flex gap-2"><input className="flex-1 bg-[#FDFBF7] border border-[#E0E0D9] rounded-xl px-3 text-xs outline-none" placeholder="輸入新歌名..." value={newTrackName} onChange={e => setNewTrackName(e.target.value)} /><button onClick={handleAddTrack} className="px-4 py-3 bg-[#77ABC0]/10 text-[#77ABC0] font-bold text-xs flex items-center justify-center gap-1 border border-dashed border-[#77ABC0]/50 hover:bg-[#77ABC0]/20 rounded-2xl transition"><Plus size={14}/> 新增</button></div>
     </div>
   );
 };
 
-// --- 練團費計算機 ---
+// --- PracticeFeeCalculator ---
 const PracticeFeeCalculator = ({ session, members, settings, role, db }) => {
-  const [selectedIds, setSelectedIds] = useState(session.attendance || []); // 預設使用 session 內的出席名單
+  const [selectedIds, setSelectedIds] = useState(session.attendance || []); 
   const [hours, setHours] = useState(2);
   const [hasKB, setHasKB] = useState(true);
   const [bankAccount, setBankAccount] = useState(settings?.studioBankAccount || "");
   const [editingBank, setEditingBank] = useState(false);
-
   const total = (hours * (settings?.studioRate || 350)) + (hasKB ? (settings?.kbRate || 200) : 0);
   const perPerson = selectedIds.length > 0 ? Math.ceil(total / selectedIds.length) : 0;
-
-  const handleUpdateBank = async () => {
-      if(!db) return;
-      await updateDoc(getDocRef(db, 'general', 'info'), { settings: { ...settings, studioBankAccount: bankAccount } });
-      setEditingBank(false);
-  };
-
-  const copyText = () => {
-    const names = selectedIds.map(id => members.find(m => m.id === id)?.nickname).join('、');
-    const text = `📅 ${session.date} 練團費用\n----------------\n⏱️ 時數：${hours}hr\n🎹 KB租借：${hasKB?'有':'無'}\n👥 分攤人：${names}\n----------------\n💰 總金額：$${total}\n👉 每人應付：$${perPerson}\n\n匯款帳號：\n${bankAccount}`;
-    if(secureCopy(text)) { alert("複製成功！"); }
-  };
+  const handleUpdateBank = async () => { if(!db) return; await updateDoc(getDocRef(db, 'general', 'info'), { settings: { ...settings, studioBankAccount: bankAccount } }); setEditingBank(false); };
+  const copyText = () => { const names = selectedIds.map(id => members.find(m => m.id === id)?.nickname).join('、'); const text = `📅 ${session.date} 練團費用\n----------------\n⏱️ 時數：${hours}hr\n🎹 KB租借：${hasKB?'有':'無'}\n👥 分攤人：${names}\n----------------\n💰 總金額：$${total}\n👉 每人應付：$${perPerson}\n\n匯款帳號：\n${bankAccount}`; if(secureCopy(text)) alert("複製成功！"); };
 
   return (
     <div className="p-4 space-y-5">
-      <div className="bg-[#F0F4F5] p-4 rounded-2xl text-center border border-[#A8D8E2]/30">
-        <div className="text-3xl font-black text-[#77ABC0] mb-1">${total}</div>
-        <div className="text-xs font-bold text-[#6E7F9B]">每人 <span className="text-lg text-[#725E77]">${perPerson}</span></div>
-      </div>
-      
+      <div className="bg-[#F0F4F5] p-4 rounded-2xl text-center border border-[#A8D8E2]/30"><div className="text-3xl font-black text-[#77ABC0] mb-1">${total}</div><div className="text-xs font-bold text-[#6E7F9B]">每人 <span className="text-lg text-[#725E77]">${perPerson}</span></div></div>
       <div className="space-y-3">
-          <div className="flex gap-2">
-            {[2, 3].map(h => <button key={h} onClick={() => setHours(h)} className={`flex-1 py-2 rounded-xl text-xs font-bold ${hours === h ? 'bg-[#725E77] text-white' : 'bg-[#FDFBF7] text-[#C5B8BF]'}`}>{h}hr</button>)}
-            <button onClick={() => setHasKB(!hasKB)} className={`flex-1 py-2 rounded-xl text-xs font-bold ${hasKB ? 'bg-[#77ABC0] text-white' : 'bg-[#FDFBF7] text-[#C5B8BF]'}`}>KB {hasKB?'+':'-'}</button>
-          </div>
-          <div>
-            <label className="text-[10px] font-bold text-[#C5B8BF] mb-2 block uppercase">出席確認 (連動日誌設定)</label>
-            <div className="flex flex-wrap gap-2">
-              {members.map(m => (
-                <button key={m.id} onClick={() => setSelectedIds(prev => prev.includes(m.id) ? prev.filter(i => i!==m.id) : [...prev, m.id])} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition ${selectedIds.includes(m.id) ? 'bg-[#A8D8E2]/20 border-[#A8D8E2] text-[#5F8794]' : 'bg-white border-[#E0E0D9] text-[#C5B8BF]'}`}>{m.nickname}</button>
-              ))}
-            </div>
-          </div>
-          <div className="flex gap-2 items-center">
-             <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-xs text-[#725E77] border border-transparent focus:border-[#77ABC0] outline-none" value={bankAccount} onChange={(e) => setBankAccount(e.target.value)} disabled={!editingBank} />
-             {(role.admin || role.finance) && !editingBank && <button onClick={()=>setEditingBank(true)}><Pencil size={16} className="text-[#C5B8BF]"/></button>}
-             {editingBank && <button onClick={handleUpdateBank}><Check size={16} className="text-[#77ABC0]"/></button>}
-          </div>
+          <div className="flex gap-2">{[2, 3].map(h => <button key={h} onClick={() => setHours(h)} className={`flex-1 py-2 rounded-xl text-xs font-bold ${hours === h ? 'bg-[#725E77] text-white' : 'bg-[#FDFBF7] text-[#C5B8BF]'}`}>{h}hr</button>)}<button onClick={() => setHasKB(!hasKB)} className={`flex-1 py-2 rounded-xl text-xs font-bold ${hasKB ? 'bg-[#77ABC0] text-white' : 'bg-[#FDFBF7] text-[#C5B8BF]'}`}>KB {hasKB?'+':'-'}</button></div>
+          <div><label className="text-[10px] font-bold text-[#C5B8BF] mb-2 block uppercase">出席確認 (連動日誌設定)</label><div className="flex flex-wrap gap-2">{members.map(m => (<button key={m.id} onClick={() => setSelectedIds(prev => prev.includes(m.id) ? prev.filter(i => i!==m.id) : [...prev, m.id])} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition ${selectedIds.includes(m.id) ? 'bg-[#A8D8E2]/20 border-[#A8D8E2] text-[#5F8794]' : 'bg-white border-[#E0E0D9] text-[#C5B8BF]'}`}>{m.nickname}</button>))}</div></div>
+          <div className="flex gap-2 items-center"><input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-xs text-[#725E77] border border-transparent focus:border-[#77ABC0] outline-none" value={bankAccount} onChange={(e) => setBankAccount(e.target.value)} disabled={!editingBank} />{(role.admin || role.finance) && !editingBank && <button onClick={()=>setEditingBank(true)}><Pencil size={16} className="text-[#C5B8BF]"/></button>}{editingBank && <button onClick={handleUpdateBank}><Check size={16} className="text-[#77ABC0]"/></button>}</div>
       </div>
       <button onClick={copyText} className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition bg-[#77ABC0] text-white`}>{<Copy size={16}/>} 複製請款文</button>
     </div>
   );
 };
 
-// --- 雜支分攤 (智慧結算) ---
+// --- MiscFeeCalculator ---
 const MiscFeeCalculator = ({ session, members, db }) => {
   const [items, setItems] = useState(session.miscExpenses || []); 
   const [newItem, setNewItem] = useState({ item: '', amount: '', payerId: '', splitters: [] });
-  
   const handleUpdate = async (newItems) => { setItems(newItems); if (db) await updateDoc(getDocRef(db, 'logs', session.id), { miscExpenses: newItems }); };
   const handleAdd = () => { if(newItem.item) handleUpdate([...items, { ...newItem, id: Date.now(), isSettled: false }]); };
   const handleToggleSettle = (idx) => { const newItems = [...items]; newItems[idx].isSettled = !newItems[idx].isSettled; handleUpdate(newItems); };
   const handleDelete = (idx) => { if (confirm("刪除此筆雜支？")) handleUpdate(items.filter((_, i) => i !== idx)); };
+  const toggleSplitter = (memberId) => { const current = newItem.splitters || []; if (current.includes(memberId)) setNewItem({...newItem, splitters: current.filter(id => id !== memberId)}); else setNewItem({...newItem, splitters: [...current, memberId]}); };
   
-  // Toggle Splitter
-  const toggleSplitter = (memberId) => {
-     const current = newItem.splitters || [];
-     if (current.includes(memberId)) setNewItem({...newItem, splitters: current.filter(id => id !== memberId)});
-     else setNewItem({...newItem, splitters: [...current, memberId]});
-  };
-
-  // 智慧結算邏輯
   const calculateDebt = () => {
-      const balance = {}; // memberId -> net amount (positive = receive, negative = pay)
-      items.filter(i => !i.isSettled).forEach(item => {
-          const splitAmount = item.amount / (item.splitters?.length || 1);
-          // Payer gets +amount
-          balance[item.payerId] = (balance[item.payerId] || 0) + parseInt(item.amount);
-          // Splitters pay -splitAmount
-          (item.splitters || []).forEach(sid => {
-              balance[sid] = (balance[sid] || 0) - splitAmount;
-          });
-      });
-      
-      // Generate readable strings
-      const result = [];
-      Object.keys(balance).forEach(id => {
-          const net = Math.round(balance[id]);
-          if (net < 0) {
-             // 找出誰是債權人 (簡單版：只列出總結)
-             const name = members.find(m => m.id === id)?.nickname || '未知';
-             result.push(`${name} 應付 $${Math.abs(net)}`);
-          } else if (net > 0) {
-             const name = members.find(m => m.id === id)?.nickname || '未知';
-             result.push(`${name} 應收 $${net}`);
-          }
-      });
-      return result;
+      const balance = {}; items.filter(i => !i.isSettled).forEach(item => { const splitAmount = item.amount / (item.splitters?.length || 1); balance[item.payerId] = (balance[item.payerId] || 0) + parseInt(item.amount); (item.splitters || []).forEach(sid => { balance[sid] = (balance[sid] || 0) - splitAmount; }); });
+      const result = []; Object.keys(balance).forEach(id => { const net = Math.round(balance[id]); if (net < 0) result.push(`${members.find(m => m.id === id)?.nickname || '未知'} 應付 $${Math.abs(net)}`); else if (net > 0) result.push(`${members.find(m => m.id === id)?.nickname || '未知'} 應收 $${net}`); }); return result;
   };
+  const copyText = () => { let text = `🍱 ${session.date} 雜支明細\n----------------\n`; items.filter(i => !i.isSettled).forEach(i => { text += `🔹 ${i.item} ($${i.amount}) - 墊付:${members.find(m=>m.id===i.payerId)?.nickname}\n`; }); secureCopy(text); };
 
   return (
     <div className="p-4 space-y-6">
-      {/* 新增區塊 */}
       <div className="bg-[#FDFBF7] p-4 rounded-2xl border border-[#E0E0D9] space-y-3">
          <div className="flex gap-2"><input className="flex-1 bg-white p-2 rounded-xl text-xs outline-none" placeholder="項目" value={newItem.item} onChange={e=>setNewItem({...newItem, item: e.target.value})}/><input className="w-20 bg-white p-2 rounded-xl text-xs outline-none" type="number" placeholder="$" value={newItem.amount} onChange={e=>setNewItem({...newItem, amount: e.target.value})}/></div>
          <div className="flex items-center gap-2 overflow-x-auto pb-1"><span className="text-[10px] font-bold text-[#C5B8BF] shrink-0">墊付:</span>{members.map(m => (<button key={m.id} onClick={()=>setNewItem({...newItem, payerId: m.id})} className={`px-2 py-1 rounded-lg text-[10px] font-bold border shrink-0 ${newItem.payerId === m.id ? 'bg-[#F1CEBA] text-white border-[#F1CEBA]' : 'bg-white text-[#C5B8BF] border-[#E0E0D9]'}`}>{m.nickname}</button>))}</div>
          <div className="flex items-center gap-2 overflow-x-auto pb-1"><span className="text-[10px] font-bold text-[#C5B8BF] shrink-0">分攤:</span>{members.map(m => (<button key={m.id} onClick={()=>toggleSplitter(m.id)} className={`px-2 py-1 rounded-lg text-[10px] font-bold border shrink-0 ${newItem.splitters?.includes(m.id) ? 'bg-[#725E77] text-white border-[#725E77]' : 'bg-white text-[#C5B8BF] border-[#E0E0D9]'}`}>{m.nickname}</button>))}</div>
          <button onClick={handleAdd} className="w-full bg-[#725E77] text-white text-xs font-bold py-2 rounded-xl">加入清單</button>
       </div>
-
-      {/* 結算建議卡片 */}
-      <div className="bg-[#E8F1E9] p-3 rounded-xl border border-[#CFE3D1]">
-         <h4 className="text-xs font-bold text-[#5F7A61] mb-2 flex items-center gap-1"><Wallet size={12}/> 結算建議 (未結清項目)</h4>
-         <div className="space-y-1">
-            {calculateDebt().map((res, i) => (
-                <div key={i} className="text-xs text-[#5F7A61]">{res}</div>
-            ))}
-            {calculateDebt().length === 0 && <div className="text-[10px] text-[#A6B5A7]">無待結算項目</div>}
+      <div className="bg-[#E8F1E9] p-3 rounded-xl border border-[#CFE3D1]"><h4 className="text-xs font-bold text-[#5F7A61] mb-2 flex items-center gap-1"><Wallet size={12}/> 結算建議 (未結清項目)</h4><div className="space-y-1">{calculateDebt().map((res, i) => (<div key={i} className="text-xs text-[#5F7A61]">{res}</div>))}{calculateDebt().length === 0 && <div className="text-[10px] text-[#A6B5A7]">無待結算項目</div>}</div></div>
+      <div className="space-y-2">{items.map((it, idx) => (
+         <div key={idx} className={`bg-white border border-[#E0E0D9] p-3 rounded-xl flex justify-between items-center text-xs ${it.isSettled ? 'opacity-50' : ''}`}>
+             <div><div className={`font-bold text-[#725E77] ${it.isSettled ? 'line-through' : ''}`}>{it.item} <span className="text-[#F1CEBA]">${it.amount}</span></div><div className="text-[#C5B8BF]">墊付: {members.find(m=>m.id===it.payerId)?.nickname}</div></div>
+             <div className="flex gap-2"><button onClick={() => handleToggleSettle(idx)} className={it.isSettled ? "text-green-500" : "text-[#C5B8BF]"} title="結清請打勾"><CheckSquare size={16}/></button><div className="flex flex-col gap-1"><button onClick={() => { const val = prompt("修改金額", it.amount); if(val) { const newItems=[...items]; newItems[idx].amount=val; handleUpdate(newItems); }}} className="text-[#77ABC0]"><Pencil size={14}/></button><button onClick={() => handleDelete(idx)} className="text-[#BC8F8F]"><Trash2 size={14}/></button></div></div>
          </div>
-      </div>
-
-      <div className="space-y-2">
-         {items.map((it, idx) => (
-           <div key={idx} className={`bg-white border border-[#E0E0D9] p-3 rounded-xl flex justify-between items-center text-xs ${it.isSettled ? 'opacity-50' : ''}`}>
-             <div>
-               <div className={`font-bold text-[#725E77] ${it.isSettled ? 'line-through' : ''}`}>{it.item} <span className="text-[#F1CEBA]">${it.amount}</span></div>
-               <div className="text-[#C5B8BF]">墊付: {members.find(m=>m.id===it.payerId)?.nickname}</div>
-             </div>
-             <div className="flex gap-2">
-                <button onClick={() => handleToggleSettle(idx)} className={it.isSettled ? "text-green-500" : "text-[#C5B8BF]"} title="結清請打勾"><CheckSquare size={16}/></button>
-                <div className="flex flex-col gap-1">
-                   <button onClick={() => { const val = prompt("修改金額", it.amount); if(val) { const newItems=[...items]; newItems[idx].amount=val; handleUpdate(newItems); }}} className="text-[#77ABC0]"><Pencil size={14}/></button>
-                   <button onClick={() => handleDelete(idx)} className="text-[#BC8F8F]"><Trash2 size={14}/></button>
-                </div>
-             </div>
-           </div>
-         ))}
-      </div>
+      ))}</div>
+      <button onClick={copyText} className="w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 bg-[#8DA399] text-white"><Copy size={16}/> 複製未結清明細</button>
     </div>
   );
 };
 
-// --- Alcohol Manager ---
+// --- Alcohol Manager & TechView & AdminDashboard (保持不變) ---
 const AlcoholManager = ({ alcohols, members, settings, db, role, user }) => {
   const [tab, setTab] = useState('list'); 
   const [newAlcohol, setNewAlcohol] = useState({ name: '', type: '威士忌', level: 100, rating: 5, note: '', comments: [] });
@@ -810,93 +725,27 @@ const AlcoholManager = ({ alcohols, members, settings, db, role, user }) => {
   const [customType, setCustomType] = useState("");
   const alcoholOptions = settings?.alcoholTypes || ['紅酒', '白酒', '清酒', '氣泡酒', '啤酒', '威士忌', '其他'];
 
-  const handleSave = async () => {
-    if (!newAlcohol.name || !db) return;
-    const finalType = newAlcohol.type === '其他' ? customType : newAlcohol.type;
-    const data = { ...newAlcohol, type: finalType };
-    
-    if (editingId) await updateDoc(getDocRef(db, 'alcohol', editingId), data);
-    else await addDoc(getCollectionRef(db, 'alcohol'), data);
-    
-    setShowAdd(false); setEditingId(null);
-    setNewAlcohol({ name: '', type: '威士忌', level: 100, rating: 5, note: '', comments: [] });
-  };
-
+  const handleSave = async () => { if (!newAlcohol.name || !db) return; const finalType = newAlcohol.type === '其他' ? customType : newAlcohol.type; const data = { ...newAlcohol, type: finalType }; if (editingId) await updateDoc(getDocRef(db, 'alcohol', editingId), data); else await addDoc(getCollectionRef(db, 'alcohol'), data); setShowAdd(false); setEditingId(null); setNewAlcohol({ name: '', type: '威士忌', level: 100, rating: 5, note: '', comments: [] }); };
   const handleDelete = async (id) => { if (!db || !confirm("確定刪除此酒品？")) return; await deleteDoc(getDocRef(db, 'alcohol', id)); };
-  
-  const handleEdit = (a) => {
-      setNewAlcohol(a); setEditingId(a.id); setShowAdd(true);
-  };
-  
-  // 酒櫃留言
-  const handleAddComment = async (id, text, currentComments) => {
-      if(!text.trim()) return;
-      // 抓取 user.email 對應的 member.nickname
-      const memberInfo = members.find(m => m.email === user.email);
-      const displayName = memberInfo ? memberInfo.nickname : user.displayName;
-      
-      const newComment = { user: displayName, text, uid: user.uid };
-      await updateDoc(getDocRef(db, 'alcohol', id), { comments: [...(currentComments||[]), newComment] });
-  };
-
-  // 刪除酒櫃留言
-  const handleDeleteComment = async (alcoholId, commentIdx, currentComments) => {
-      if(!confirm("刪除留言？")) return;
-      const newComments = [...currentComments];
-      newComments.splice(commentIdx, 1);
-      await updateDoc(getDocRef(db, 'alcohol', alcoholId), { comments: newComments });
-  };
+  const handleEdit = (a) => { setNewAlcohol(a); setEditingId(a.id); setShowAdd(true); };
+  const handleAddComment = async (id, text, currentComments) => { if(!text.trim()) return; const memberInfo = members.find(m => m.email === user.email); const displayName = memberInfo ? memberInfo.nickname : user.displayName; const newComment = { user: displayName, text, uid: user.uid }; await updateDoc(getDocRef(db, 'alcohol', id), { comments: [...(currentComments||[]), newComment] }); };
+  const handleDeleteComment = async (alcoholId, commentIdx, currentComments) => { if(!confirm("刪除留言？")) return; const newComments = [...currentComments]; newComments.splice(commentIdx, 1); await updateDoc(getDocRef(db, 'alcohol', alcoholId), { comments: newComments }); };
 
   return (
     <div className="space-y-4 animate-in slide-in-from-right-8">
-      <div className="flex bg-[#E0E0D9] p-1 rounded-xl mb-2">
-        <button onClick={() => setTab('list')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition ${tab === 'list' ? 'bg-white shadow text-[#77ABC0]' : 'text-[#C5B8BF]'}`}>庫存清單</button>
-        <button onClick={() => setTab('calculator')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition ${tab === 'calculator' ? 'bg-white shadow text-[#77ABC0]' : 'text-[#C5B8BF]'}`}>補貨計算</button>
-      </div>
+      <div className="flex bg-[#E0E0D9] p-1 rounded-xl mb-2"><button onClick={() => setTab('list')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition ${tab === 'list' ? 'bg-white shadow text-[#77ABC0]' : 'text-[#C5B8BF]'}`}>庫存清單</button><button onClick={() => setTab('calculator')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition ${tab === 'calculator' ? 'bg-white shadow text-[#77ABC0]' : 'text-[#C5B8BF]'}`}>補貨計算</button></div>
       {tab === 'list' ? (
         <div className="space-y-3">
           {role.alcohol && <button onClick={() => { setEditingId(null); setNewAlcohol({ name: '', type: '威士忌', level: 100, rating: 5, note: '', comments: [] }); setShowAdd(true); }} className="w-full py-3 text-[#CBABCA] font-bold text-xs flex items-center justify-center gap-1 border border-dashed border-[#CBABCA] rounded-2xl hover:bg-[#FFF5F7]"><Plus size={14}/> 新增酒品</button>}
-          
-          {showAdd && (
-            <div className="bg-white p-4 rounded-[24px] border border-[#77ABC0] space-y-3">
-               <input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="酒名" value={newAlcohol.name} onChange={e=>setNewAlcohol({...newAlcohol, name: e.target.value})} />
-               <select className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" value={newAlcohol.type} onChange={e=>setNewAlcohol({...newAlcohol, type: e.target.value})}>
-                 {alcoholOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-               </select>
-               {newAlcohol.type === '其他' && <input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="輸入自訂種類" value={customType} onChange={e=>setCustomType(e.target.value)} />}
-               <div className="flex items-center gap-2 text-xs text-[#C5B8BF]">
-                 <span>剩餘量: {newAlcohol.level}%</span>
-                 <input type="range" min="0" max="100" className="flex-1" value={newAlcohol.level} onChange={e=>setNewAlcohol({...newAlcohol, level: e.target.value})} />
-               </div>
-               <input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="備註..." value={newAlcohol.note} onChange={e=>setNewAlcohol({...newAlcohol, note: e.target.value})} />
-               <div className="flex gap-2"><button onClick={() => setShowAdd(false)} className="flex-1 p-2 text-xs text-slate-400">取消</button><button onClick={handleSave} className="flex-1 p-2 bg-[#77ABC0] text-white rounded-lg text-xs font-bold">儲存</button></div>
-            </div>
-          )}
-
+          {showAdd && (<div className="bg-white p-4 rounded-[24px] border border-[#77ABC0] space-y-3"><input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="酒名" value={newAlcohol.name} onChange={e=>setNewAlcohol({...newAlcohol, name: e.target.value})} /><select className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" value={newAlcohol.type} onChange={e=>setNewAlcohol({...newAlcohol, type: e.target.value})}>{alcoholOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}</select>{newAlcohol.type === '其他' && <input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="輸入自訂種類" value={customType} onChange={e=>setCustomType(e.target.value)} />}<div className="flex items-center gap-2 text-xs text-[#C5B8BF]"><span>剩餘量: {newAlcohol.level}%</span><input type="range" min="0" max="100" className="flex-1" value={newAlcohol.level} onChange={e=>setNewAlcohol({...newAlcohol, level: e.target.value})} /></div><input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="備註..." value={newAlcohol.note} onChange={e=>setNewAlcohol({...newAlcohol, note: e.target.value})} /><div className="flex gap-2"><button onClick={() => setShowAdd(false)} className="flex-1 p-2 text-xs text-slate-400">取消</button><button onClick={handleSave} className="flex-1 p-2 bg-[#77ABC0] text-white rounded-lg text-xs font-bold">儲存</button></div></div>)}
           {alcohols.map(a => (
             <div key={a.id} className="bg-white p-5 rounded-[28px] border border-[#E0E0D9] shadow-sm flex flex-col gap-3 relative group">
                <div className="flex gap-4 items-start">
                   <div className="bg-[#F0EEE6] w-16 h-20 rounded-2xl flex items-center justify-center shrink-0"><Wine className="text-[#D6C592]" size={32} /></div>
-                  <div className="flex-1" onClick={() => role.alcohol && handleEdit(a)}>
-                    <h3 className="font-bold text-lg text-[#725E77]">{a.name}</h3>
-                    <p className="text-xs font-bold text-[#8B8C89] mb-1">{a.type}</p>
-                    <div className="w-full h-1.5 bg-[#F0F4F5] rounded-full overflow-hidden mb-2"><div className="h-full bg-[#D6C592]" style={{width: `${a.level}%`}}></div></div>
-                    <div className="text-xs text-[#6E7F9B]">{a.note}</div>
-                  </div>
+                  <div className="flex-1" onClick={() => role.alcohol && handleEdit(a)}><h3 className="font-bold text-lg text-[#725E77]">{a.name}</h3><p className="text-xs font-bold text-[#8B8C89] mb-1">{a.type}</p><div className="w-full h-1.5 bg-[#F0F4F5] rounded-full overflow-hidden mb-2"><div className="h-full bg-[#D6C592]" style={{width: `${a.level}%`}}></div></div><div className="text-xs text-[#6E7F9B]">{a.note}</div></div>
                   {role.alcohol && <button onClick={() => handleDelete(a.id)} className="text-[#BC8F8F] opacity-0 group-hover:opacity-100 transition"><Trash2 size={16}/></button>}
                </div>
-               {/* 品酒筆記區 */}
-               <div className="pt-2 border-t border-[#F0F4F5]">
-                  {(a.comments || []).map((c, idx) => (
-                      <div key={idx} className="text-[10px] text-[#6E7F9B] mb-1 flex justify-between items-start group/comment">
-                         <span><span className="font-bold">{c.user}:</span> {c.text}</span>
-                         {(c.uid === user.uid || role.admin) && <button onClick={() => handleDeleteComment(a.id, idx, a.comments)} className="text-[#BC8F8F] opacity-0 group-hover/comment:opacity-100"><Trash2 size={10}/></button>}
-                      </div>
-                  ))}
-                  <div className="flex gap-2 mt-2">
-                     <input className="w-full bg-[#FDFBF7] p-1.5 rounded-lg text-xs outline-none" placeholder="寫下品飲心得..." onKeyDown={e=>{if(e.key==='Enter'){handleAddComment(a.id, e.target.value, a.comments); e.target.value=''}}} />
-                  </div>
-               </div>
+               <div className="pt-2 border-t border-[#F0F4F5]">{(a.comments || []).map((c, idx) => (<div key={idx} className="text-[10px] text-[#6E7F9B] mb-1 flex justify-between items-start group/comment"><span><span className="font-bold">{c.user}:</span> {c.text}</span>{(c.uid === user.uid || role.admin) && <button onClick={() => handleDeleteComment(a.id, idx, a.comments)} className="text-[#BC8F8F] opacity-0 group-hover/comment:opacity-100"><Trash2 size={10}/></button>}</div>))}<div className="flex gap-2 mt-2"><input className="w-full bg-[#FDFBF7] p-1.5 rounded-lg text-xs outline-none" placeholder="寫下品飲心得..." onKeyDown={e=>{if(e.key==='Enter'){handleAddComment(a.id, e.target.value, a.comments); e.target.value=''}}} /></div></div>
             </div>
           ))}
         </div>
@@ -905,63 +754,41 @@ const AlcoholManager = ({ alcohols, members, settings, db, role, user }) => {
   );
 };
 
-// --- Admin Dashboard (Settings + Export) ---
+const TechView = ({ songs, db, role, user }) => {
+  const [viewMode, setViewMode] = useState('list'); 
+  const [filter, setFilter] = useState('all'); 
+  const [showAdd, setShowAdd] = useState(false);
+  const [newSong, setNewSong] = useState({ title: '', artist: '', link: '', type: 'cover' });
+  const filteredSongs = filter === 'all' ? songs : songs.filter(s => s.type.toLowerCase() === filter);
+  const handleAdd = async () => { if (!newSong.title || !db) return; await addDoc(getCollectionRef(db, 'songs'), { ...newSong, user: user.displayName, uid: user.uid }); setShowAdd(false); setNewSong({ title: '', artist: '', link: '', type: 'cover' }); };
+  const handleDelete = async (id) => { if (!db || !confirm("刪除此資源？")) return; await deleteDoc(getDocRef(db, 'songs', id)); };
+
+  return (
+    <div className="space-y-4 animate-in slide-in-from-right-8">
+      <div className="flex justify-between items-center px-1"><h2 className="text-2xl font-bold text-[#725E77]">資源分享</h2><div className="flex bg-[#E0E0D9]/50 p-1 rounded-lg"><button onClick={() => setViewMode('list')} className={`p-1.5 rounded-md ${viewMode === 'list' ? 'bg-white text-[#725E77]' : 'text-[#C5B8BF]'}`}><List size={16}/></button><button onClick={() => setViewMode('grid')} className={`p-1.5 rounded-md ${viewMode === 'grid' ? 'bg-white text-[#725E77]' : 'text-[#C5B8BF]'}`}><LayoutGrid size={16}/></button></div></div>
+      <div className="flex gap-2 overflow-x-auto pb-1">{['all', 'cover', 'tech', 'gear'].map(f => (<button key={f} onClick={() => setFilter(f)} className={`px-4 py-1.5 rounded-full text-xs font-bold capitalize whitespace-nowrap transition ${filter === f ? 'bg-[#77ABC0] text-white' : 'bg-white border border-[#E0E0D9] text-[#C5B8BF]'}`}>{f}</button>))}</div>
+      <button onClick={() => setShowAdd(true)} className="w-full py-3 text-[#77ABC0] font-bold text-xs flex items-center justify-center gap-1 border border-dashed border-[#77ABC0]/50 hover:bg-[#77ABC0]/5 rounded-2xl transition"><Plus size={14}/> 分享資源</button>
+      {showAdd && (<div className="bg-white p-4 rounded-[24px] border border-[#77ABC0] space-y-3"><input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="標題" value={newSong.title} onChange={e=>setNewSong({...newSong, title: e.target.value})} /><input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="說明" value={newSong.artist} onChange={e=>setNewSong({...newSong, artist: e.target.value})} /><input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="連結" value={newSong.link} onChange={e=>setNewSong({...newSong, link: e.target.value})} /><select className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" value={newSong.type} onChange={e=>setNewSong({...newSong, type: e.target.value})}><option value="cover">Cover</option><option value="tech">Tech</option><option value="gear">Gear</option></select><div className="flex gap-2"><button onClick={() => setShowAdd(false)} className="flex-1 p-2 text-xs text-slate-400">取消</button><button onClick={handleAdd} className="flex-1 p-2 bg-[#77ABC0] text-white rounded-lg text-xs font-bold">發布</button></div></div>)}
+      <div className={viewMode === 'grid' ? "grid grid-cols-2 gap-3" : "space-y-3"}>{filteredSongs.map(s => (<div key={s.id} className={`bg-white p-4 rounded-[24px] border border-[#E0E0D9] shadow-sm hover:shadow-md transition block relative group ${viewMode === 'list' ? 'flex items-center gap-4' : ''}`}>{(role.admin || s.uid === user.uid) && (<button onClick={() => handleDelete(s.id)} className="absolute top-2 right-2 text-[#BC8F8F] opacity-0 group-hover:opacity-100 transition z-10"><Trash2 size={14}/></button>)}<a href={s.link} target="_blank" className={`flex-1 ${viewMode === 'list' ? 'flex items-center gap-4' : ''}`}><div className={`w-10 h-10 rounded-full flex items-center justify-center mb-2 ${s.type === 'cover' ? 'bg-[#FDF2F2] text-[#BC8F8F]' : s.type === 'tech' ? 'bg-[#F0F4F5] text-[#6D8A96]' : 'bg-[#FFF9DB] text-[#D6C592]'}`}>{s.type === 'cover' ? <Headphones size={20}/> : s.type === 'tech' ? <Zap size={20}/> : <Gift size={20}/>}</div><div className="min-w-0"><h4 className="font-bold text-[#725E77] truncate">{s.title}</h4><p className="text-xs text-[#8B8C89]">{s.artist}</p></div></a></div>))}</div>
+    </div>
+  );
+};
+
 const AdminDashboard = ({ members, logs, generalData, db }) => {
   const [tab, setTab] = useState('members');
   const [alcoholTypes, setAlcoholTypes] = useState(generalData.settings?.alcoholTypes || []);
-
-  const handleUpdateSettings = async () => {
-     await updateDoc(getDocRef(db, 'general', 'info'), { settings: { ...generalData.settings, alcoholTypes } });
-     alert("設定已更新");
-  };
-
-  const handleExport = () => {
-    const dataToExport = tab === 'members' ? members : logs;
-    const formattedData = dataToExport.map(item => {
-      if (tab === 'members') return { 暱稱: item.nickname, 本名: item.realName, 樂器: item.instrument, 生日: item.birthday, Email: item.email || '' };
-      else {
-          const attendeesCount = members.filter(m => m.attendance?.includes(item.date)).length;
-          const trackDetails = item.tracks?.map(t => `${t.title} ${t.comments?.length ? '(' + t.comments.map(c => c.user + ':' + c.text).join('/') + ')' : ''}`).join('; ');
-          return { 日期: item.date, 地點: item.location, 出席人數: attendeesCount, 練習曲目: trackDetails, 備註: item.funNotes };
-      }
-    });
-    exportToCSV(formattedData, `Band_${tab}_export.csv`);
-  };
+  const handleUpdateSettings = async () => { await updateDoc(getDocRef(db, 'general', 'info'), { settings: { ...generalData.settings, alcoholTypes } }); alert("設定已更新"); };
+  const handleExport = () => { const dataToExport = tab === 'members' ? members : logs; const formattedData = dataToExport.map(item => { if (tab === 'members') return { 暱稱: item.nickname, 本名: item.realName, 樂器: item.instrument, 生日: item.birthday, Email: item.email || '' }; else { const attendeesCount = members.filter(m => m.attendance?.includes(item.date)).length; const trackDetails = item.tracks?.map(t => `${t.title} ${t.comments?.length ? '(' + t.comments.map(c => c.user + ':' + c.text).join('/') + ')' : ''}`).join('; '); return { 日期: item.date, 地點: item.location, 出席人數: attendeesCount, 練習曲目: trackDetails, 備註: item.funNotes }; } }); exportToCSV(formattedData, `Band_${tab}_export.csv`); };
+  const handleDelete = async (collectionName, id) => { if (confirm("⚠️ 警告：這將永久刪除此筆資料！確定嗎？")) await deleteDoc(getDocRef(db, collectionName, id)); };
 
   return (
     <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 pb-20">
       <div className="bg-white p-5 rounded-[32px] border border-[#E0E0D9] shadow-sm">
         <h2 className="text-xl font-black text-[#725E77] flex items-center gap-2 mb-4"><Database size={24}/> 後台管理</h2>
-        <div className="flex gap-2 mb-4">
-           <button onClick={() => setTab('members')} className={`px-4 py-2 rounded-xl text-xs font-bold ${tab === 'members' ? 'bg-[#77ABC0] text-white' : 'bg-[#F0F4F5]'}`}>成員</button>
-           <button onClick={() => setTab('logs')} className={`px-4 py-2 rounded-xl text-xs font-bold ${tab === 'logs' ? 'bg-[#77ABC0] text-white' : 'bg-[#F0F4F5]'}`}>紀錄</button>
-           <button onClick={() => setTab('settings')} className={`px-4 py-2 rounded-xl text-xs font-bold ${tab === 'settings' ? 'bg-[#77ABC0] text-white' : 'bg-[#F0F4F5]'}`}>設定</button>
-        </div>
-        {tab === 'settings' ? (
-           <div className="space-y-3">
-              <h3 className="font-bold text-[#725E77]">酒櫃分類 (用逗號分隔)</h3>
-              <textarea className="w-full h-24 p-3 bg-[#FDFBF7] rounded-xl text-xs" value={alcoholTypes.join(',')} onChange={e => setAlcoholTypes(e.target.value.split(','))} />
-              <button onClick={handleUpdateSettings} className="w-full py-2 bg-[#77ABC0] text-white rounded-xl text-xs font-bold">儲存設定</button>
-           </div>
-        ) : (
-           <button onClick={handleExport} className="w-full py-3 bg-[#E8F1E9] text-[#5F7A61] rounded-xl text-xs font-bold flex items-center justify-center gap-2"><Download size={16}/> 匯出 CSV</button>
-        )}
+        <div className="flex gap-2 mb-4"><button onClick={() => setTab('members')} className={`px-4 py-2 rounded-xl text-xs font-bold ${tab === 'members' ? 'bg-[#77ABC0] text-white' : 'bg-[#F0F4F5]'}`}>成員</button><button onClick={() => setTab('logs')} className={`px-4 py-2 rounded-xl text-xs font-bold ${tab === 'logs' ? 'bg-[#77ABC0] text-white' : 'bg-[#F0F4F5]'}`}>紀錄</button><button onClick={() => setTab('settings')} className={`px-4 py-2 rounded-xl text-xs font-bold ${tab === 'settings' ? 'bg-[#77ABC0] text-white' : 'bg-[#F0F4F5]'}`}>設定</button></div>
+        {tab === 'settings' ? (<div className="space-y-3"><h3 className="font-bold text-[#725E77]">酒櫃分類</h3><textarea className="w-full h-24 p-3 bg-[#FDFBF7] rounded-xl text-xs" value={alcoholTypes.join(',')} onChange={e => setAlcoholTypes(e.target.value.split(','))} /><button onClick={handleUpdateSettings} className="w-full py-2 bg-[#77ABC0] text-white rounded-xl text-xs font-bold">儲存設定</button></div>) : (<button onClick={handleExport} className="w-full py-3 bg-[#E8F1E9] text-[#5F7A61] rounded-xl text-xs font-bold flex items-center justify-center gap-2"><Download size={16}/> 匯出 CSV</button>)}
       </div>
-      {tab !== 'settings' && (
-        <div className="bg-white rounded-[24px] border border-[#E0E0D9] overflow-hidden p-4">
-           <table className="w-full text-left text-xs">
-              <thead><tr><th className="p-2">名稱/日期</th><th className="p-2">詳情</th></tr></thead>
-              <tbody>
-                 {(tab === 'members' ? members : logs).map(i => (
-                    <tr key={i.id} className="border-t">
-                        <td className="p-2 font-bold">{tab === 'members' ? i.nickname : i.date}</td>
-                        <td className="p-2 text-slate-500">{tab === 'members' ? i.instrument : i.location}</td>
-                    </tr>
-                 ))}
-              </tbody>
-           </table>
-        </div>
-      )}
+      {tab !== 'settings' && (<div className="bg-white rounded-[24px] border border-[#E0E0D9] overflow-hidden p-4"><table className="w-full text-left text-xs"><thead><tr><th className="p-2">名稱/日期</th><th className="p-2">詳情</th><th className="p-2 text-right">操作</th></tr></thead><tbody>{(tab === 'members' ? members : logs).map(i => (<tr key={i.id} className="border-t"><td className="p-2 font-bold">{tab === 'members' ? i.nickname : i.date}</td><td className="p-2 text-slate-500">{tab === 'members' ? i.instrument : i.location}</td><td className="p-2 text-right"><button onClick={() => handleDelete(tab === 'members' ? 'members' : 'logs', i.id)} className="text-[#BC8F8F]"><Trash2 size={14}/></button></td></tr>))}</tbody></table></div>)}
     </div>
   );
 };
