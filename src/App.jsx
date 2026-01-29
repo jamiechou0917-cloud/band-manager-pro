@@ -11,26 +11,33 @@ import {
   Wallet, Receipt, Coffee, Gift, Zap, LayoutGrid, List,
   PartyPopper, Headphones, Speaker, Star, Image as ImageIcon, Disc,
   Ghost, Pencil, Trash2, Lock, Save, MinusCircle, FilePlus, AlertTriangle,
-  Database, Download, Filter, Search, Clock, ListPlus, Edit, CheckSquare
+  Database, Download, Filter, Search, Clock, ListPlus, Edit, CheckSquare, MessageSquare
 } from 'lucide-react';
 
 // ==========================================
 // 🔐 權限管理區
 // ==========================================
 
-// 1. 超級管理員 (最後的救援鑰匙，保留您的 Email 以防資料庫清空時無法登入)
+// 1. 團員白名單 (只有這些 Email 可以登入使用)
+const MEMBER_EMAILS = [
+  "jamie.chou0917@gmail.com", 
+  "drummer@gmail.com",
+  "bass@gmail.com",
+  "keyboard@gmail.com",
+  "demo@test.com"
+];
+
+// 2. 超級管理員 (擁有後台、編輯全團資料權限)
 const ADMIN_EMAILS = [
   "jamie.chou0917@gmail.com",
   "demo@test.com"
 ];
 
-// 2. 特殊職位名稱 (需與團員名單中的本名/暱稱一致)
+// 3. 特殊職位名稱
 const ROLE_FINANCE_NAME = "陳昱維"; 
 const ROLE_ALCOHOL_NAME = "李家賢"; 
 
 // --- 🎸 樂團專屬設定 ---
-const BAND_LOGO_BASE64 = ""; 
-const BAND_LOGO_URL = ""; 
 const BAND_NAME = "不開玩笑";
 
 // --- Logo 元件 ---
@@ -61,25 +68,34 @@ const secureCopy = (text) => {
   }
 };
 
-// --- 工具: 匯出 CSV (v9.0 規格) ---
+// --- 工具: 莫蘭迪色調產生器 ---
+const MORANDI_PALETTE = ['#8C736F', '#AAB8AB', '#B7B7BD', '#CCD2CC', '#8f9e9d', '#b09e99'];
+const getMorandiColor = (str) => {
+  if (!str) return MORANDI_PALETTE[0];
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const index = Math.abs(hash) % MORANDI_PALETTE.length;
+  return MORANDI_PALETTE[index];
+};
+
+// --- 工具: 匯出 CSV ---
 const exportToCSV = (data, filename) => {
   if (!data || !data.length) {
     alert("沒有資料可匯出");
     return;
   }
-  
-  // 自動偵測欄位並處理 CSV 格式
   const keys = Object.keys(data[0]);
   const separator = ',';
-  
   const csvContent =
-    '\uFEFF' + // BOM 解決中文亂碼
+    '\uFEFF' + 
     keys.join(separator) +
     '\n' +
     data.map(row => {
       return keys.map(k => {
         let cell = row[k] === null || row[k] === undefined ? '' : row[k];
-        cell = cell.toString().replace(/"/g, '""'); // Escape double quotes
+        cell = cell.toString().replace(/"/g, '""'); 
         if (cell.search(/("|,|\n)/g) >= 0) cell = `"${cell}"`;
         return cell;
       }).join(separator);
@@ -98,18 +114,7 @@ const exportToCSV = (data, filename) => {
   }
 };
 
-// --- 工具: 顏色產生器 ---
-const stringToColor = (str) => {
-  if (!str) return '#CBABCA';
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = str.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  const c = (hash & 0x00FFFFFF).toString(16).toUpperCase();
-  return '#' + '00000'.substring(0, 6 - c.length) + c;
-};
-
-// --- 工具: 生日顯示 (隱藏年份) ---
+// --- 工具: 生日顯示 ---
 const formatBirthdayDisplay = (dateStr) => {
   if (!dateStr) return "未知";
   const parts = dateStr.split('-');
@@ -168,7 +173,7 @@ try {
   }
 } catch (e) { console.error("Firebase init error:", e); }
 
-// --- 預設資料 (v9.0 更新) ---
+// --- 預設資料 (v10.0 更新) ---
 const DEFAULT_GENERAL_DATA = {
   settings: {
     studioRate: 350, kbRate: 200,     
@@ -201,7 +206,6 @@ const App = () => {
       getRedirectResult(auth).catch(e => console.log(e));
       const unsubAuth = onAuthStateChanged(auth, async (u) => {
         setUser(u);
-        // 若在預覽環境，自動登入體驗帳號
         if (!u && IS_CANVAS) {
             setTimeout(() => setUser({ uid: 'demo', displayName: '體驗帳號', photoURL: null, email: 'demo@test.com' }), 1000);
         }
@@ -211,15 +215,13 @@ const App = () => {
     } else { setLoading(false); }
   }, []);
 
-  // 權限與白名單檢查 (與 Members 連動)
+  // 權限與白名單
   useEffect(() => {
-    // 等待 members 資料載入後才進行判斷
     if (user) {
       const userEmail = user.email;
       const isAdmin = ADMIN_EMAILS.includes(userEmail);
       
-      // 檢查是否在成員名單內 (或是超級管理員)
-      // 非 Canvas 環境才檢查，避免預覽壞掉
+      // 非 Canvas 環境嚴格檢查白名單
       if (!IS_CANVAS && !isAdmin && members.length > 0) {
          const isMember = members.some(m => m.email === userEmail);
          if (!isMember) {
@@ -229,7 +231,6 @@ const App = () => {
          }
       }
 
-      // 3. 職位權限分配
       const financeMember = members.find(m => m.realName === ROLE_FINANCE_NAME || m.nickname === ROLE_FINANCE_NAME);
       const isFinance = isAdmin || (financeMember && financeMember.email === userEmail);
       
@@ -244,7 +245,7 @@ const App = () => {
     }
   }, [user, members]);
 
-  // Firestore 資料監聽
+  // Firestore 資料
   useEffect(() => {
     if (!db || !user) return;
     const unsubMembers = onSnapshot(getCollectionRef(db, 'members'), (snap) => setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() }))), (e) => {if(e.code==='permission-denied') console.warn("Perms error");});
@@ -255,7 +256,6 @@ const App = () => {
       if (docSnap.exists()) {
         const data = docSnap.data();
         if (data.nextPractice && !data.practices) data.practices = [data.nextPractice];
-        // 確保 settings 內有 alcoholTypes
         if (!data.settings?.alcoholTypes) {
            data.settings = { ...DEFAULT_GENERAL_DATA.settings, ...(data.settings || {}) };
         }
@@ -280,8 +280,8 @@ const App = () => {
 
     switch (activeTab) {
       case 'dashboard': return <DashboardView members={members} generalData={data} alcoholCount={alcohols.length} db={db} role={role} user={user} />;
-      case 'logs': return <SessionLogManager sessions={logs} practices={data.practices || []} members={members} settings={data.settings} db={db} role={role} />;
-      case 'alcohol': return <AlcoholManager alcohols={alcohols} members={members} settings={data.settings} db={db} role={role} />;
+      case 'logs': return <SessionLogManager sessions={logs} practices={data.practices || []} members={members} settings={data.settings} db={db} role={role} user={user} />;
+      case 'alcohol': return <AlcoholManager alcohols={alcohols} members={members} settings={data.settings} db={db} role={role} user={user} />;
       case 'tech': return <TechView songs={songs} db={db} role={role} user={user} />;
       case 'admin': return <AdminDashboard members={members} logs={logs} generalData={data} db={db} />;
       default: return <DashboardView />;
@@ -289,8 +289,7 @@ const App = () => {
   };
 
   if (loading) return <div className="h-screen flex justify-center items-center bg-[#FDFBF7]"><Loader2 className="animate-spin text-[#77ABC0]"/></div>;
-  const logoSrc = BAND_LOGO_BASE64 || BAND_LOGO_URL;
-  const showImage = logoSrc && !imgError;
+  const showImage = !imgError && BAND_LOGO_BASE64;
   const handlePrankClick = (e) => {
     const btn = e.currentTarget;
     btn.style.transform = 'rotate(360deg) scale(1.2)';
@@ -319,18 +318,15 @@ const App = () => {
     <div className="min-h-screen bg-[#FDFBF7] text-[#725E77] font-sans pb-24">
       <header className="bg-white/80 backdrop-blur sticky top-0 z-40 border-b border-[#CBABCA]/20 px-4 py-3 flex justify-between items-center shadow-sm">
         <div className="flex items-center gap-3">
-          {showImage ? <img src={logoSrc} alt="Logo" className="w-9 h-9 rounded-xl object-contain bg-white shadow-sm" onError={() => setImgError(true)} /> : <BandLogo />}
+          {showImage ? <img src={BAND_LOGO_BASE64} alt="Logo" className="w-9 h-9 rounded-xl object-contain bg-white shadow-sm" onError={() => setImgError(true)} /> : <BandLogo />}
           <span className="font-bold text-lg tracking-wide text-[#77ABC0]">{BAND_NAME}</span>
         </div>
         <div className="flex items-center gap-2">
           {role.admin && <span className="bg-rose-100 text-rose-600 text-[10px] px-2 py-0.5 rounded-full font-bold">Admin</span>}
-          
-          {/* 後台按鈕移到上方 */}
           {role.admin && (
              <button onClick={() => setActiveTab('admin')} className={`p-1.5 rounded-full transition ${activeTab === 'admin' ? 'bg-[#77ABC0] text-white' : 'text-[#CBABCA] hover:bg-[#F2D7DD]'}`}><Settings size={18}/></button>
           )}
-
-          <div className="w-8 h-8 bg-[#E5C3D3]/20 rounded-full flex items-center justify-center text-[#77ABC0] font-bold border-2 border-white shadow-sm overflow-hidden">
+          <div className="w-8 h-8 bg-[#E5C3D3]/20 rounded-full flex items-center justify-center text-[#77ABC0] font-bold border-2 border-white shadow-sm overflow-hidden" style={{backgroundColor: user.photoURL ? 'transparent' : stringToColor(user.displayName)}}>
              {user.photoURL ? <img src={user.photoURL} alt="U" /> : user.displayName?.[0]}
           </div>
           <button onClick={handleLogout} className="p-1.5 bg-[#FDFBF7] rounded-full text-[#BC8F8F] hover:bg-[#F2D7DD] transition"><LogOut size={16} /></button>
@@ -352,7 +348,6 @@ const App = () => {
       {showPrankModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
           <div className="bg-white w-full max-w-xs p-6 rounded-[32px] text-center shadow-2xl animate-in zoom-in-95 duration-200 relative overflow-hidden">
-            <div className="absolute top-0 left-0 right-0 h-2 bg-[#F1CEBA]"></div>
             <div className="w-20 h-20 bg-[#F1CEBA]/20 text-[#F1CEBA] rounded-full flex items-center justify-center mx-auto mb-4"><Ghost size={40} className="animate-bounce" /></div>
             <h3 className="text-xl font-black text-[#725E77] mb-2">👻 抓到了！</h3>
             <p className="text-[#6E7F9B] font-bold mb-6">嘿嘿！被騙了吧！<br/>這顆按鈕只是裝飾！😜</p>
@@ -400,22 +395,16 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
     const canEdit = role.admin || (user.email && member.email === user.email);
     if (!canEdit) { alert("只能修改自己的出席狀態喔！"); return; }
     const currentAttendance = member.attendance || [];
-    let newAttendance;
-    if (currentAttendance.includes(dateStr)) {
-      newAttendance = currentAttendance.filter(d => d !== dateStr);
-    } else {
-      newAttendance = [...currentAttendance, dateStr];
-    }
+    let newAttendance = currentAttendance.includes(dateStr) 
+      ? currentAttendance.filter(d => d !== dateStr) 
+      : [...currentAttendance, dateStr];
     await updateDoc(getDocRef(db, 'members', memberId), { attendance: newAttendance });
   };
 
   const handleSaveMember = async (memberData) => {
     if (!db) return;
-    if (memberData.id) {
-      await updateDoc(getDocRef(db, 'members', memberData.id), memberData);
-    } else {
-      await addDoc(getCollectionRef(db, 'members'), memberData);
-    }
+    if (memberData.id) await updateDoc(getDocRef(db, 'members', memberData.id), memberData);
+    else await addDoc(getCollectionRef(db, 'members'), memberData);
     setEditingMember(null);
   };
 
@@ -518,8 +507,10 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
             <div key={m.id} onClick={() => setExpandedMember(expandedMember === m.id ? null : m.id)} className={`bg-white p-4 rounded-2xl border shadow-sm transition-all cursor-pointer ${expandedMember === m.id ? 'border-[#CBABCA] ring-1 ring-[#CBABCA]/30' : 'border-[#E0E0D9]'}`}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-2xl bg-[#E5C3D3]/30 flex items-center justify-center text-[#725E77] font-bold text-lg border border-[#E5C3D3]/50" style={{backgroundColor: stringToColor(m.nickname || m.realName)}}>
-                     {m.avatarUrl ? <img src={m.avatarUrl} alt="U" className="w-full h-full object-cover"/> : (m.nickname?.[0] || 'M')}
+                  {/* 智慧頭像 - 莫蘭迪配色 */}
+                  <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white font-bold text-lg border-2 border-white shadow-sm overflow-hidden" 
+                       style={{backgroundColor: stringToColor(m.nickname || m.realName)}}>
+                     {m.nickname?.[0] || 'M'}
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
@@ -586,7 +577,7 @@ const MemberEditModal = ({ member, onClose, onSave }) => {
            <input className="bg-[#FDFBF7] p-3 rounded-xl text-sm" placeholder="本名" value={form.realName || ''} onChange={e => setForm({...form, realName: e.target.value})} />
         </div>
         <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm border border-[#77ABC0]/30" placeholder="Google Email (權限綁定用)" value={form.email || ''} onChange={e => setForm({...form, email: e.target.value})} />
-        <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm" placeholder="頭像網址 (FB/IG圖片連結)" value={form.avatarUrl || ''} onChange={e => setForm({...form, avatarUrl: e.target.value})} />
+        {/* 移除頭像網址，改用自動配色 */}
         <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm" placeholder="樂器 (Vocal, Bass...)" value={form.instrument || ''} onChange={e => setForm({...form, instrument: e.target.value})} />
         <input type="date" className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm" value={form.birthday || ''} onChange={e => setForm({...form, birthday: e.target.value})} />
         <textarea className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm h-20" placeholder="備註..." value={form.note || ''} onChange={e => setForm({...form, note: e.target.value})} />
@@ -600,9 +591,12 @@ const MemberEditModal = ({ member, onClose, onSave }) => {
 };
 
 // --- 2. 日誌管理器 ---
-const SessionLogManager = ({ sessions, practices, members, settings, db, role }) => {
+const SessionLogManager = ({ sessions, practices, members, settings, db, appId, role, user }) => {
   const [activeSessionId, setActiveSessionId] = useState(null);
+  
+  // scheduledDates 現在是 practices 陣列，需要先提取日期
   const existingDates = sessions.map(s => s.date);
+
   const pendingPractices = practices.filter(p => {
       const pDate = p.date.split('T')[0];
       return !existingDates.includes(pDate);
@@ -613,18 +607,32 @@ const SessionLogManager = ({ sessions, practices, members, settings, db, role })
 
   const handleCreate = async (dateStr, location = '圓頭音樂') => {
     if (!db) return;
-    const newSession = { date: dateStr, location: location, funNotes: '', tracks: [], miscExpenses: [], createdAt: serverTimestamp() };
+    const newSession = { 
+        date: dateStr, 
+        location: location, 
+        funNotes: '', 
+        tracks: [], 
+        miscExpenses: [], 
+        createdAt: serverTimestamp() 
+    };
     try {
       const docRef = await addDoc(getCollectionRef(db, 'logs'), newSession);
       setActiveSessionId(docRef.id);
       setShowManualCreate(false);
     } catch(e) { alert("Error: " + e.message); }
   };
+  
+  // 新增刪除功能
+  const handleDeleteSession = async (e, id) => {
+    e.stopPropagation();
+    if (!db || !confirm("確定要刪除這筆練團日誌嗎？資料將無法復原。")) return;
+    await deleteDoc(getDocRef(db, 'logs', id));
+  };
 
   if (activeSessionId) {
     const session = sessions.find(s => s.id === activeSessionId);
     if (!session) return <div className="p-10 text-center text-[#CBABCA]">正在同步...</div>;
-    return <SessionDetail session={session} members={members} settings={settings} onBack={() => setActiveSessionId(null)} db={db} role={role} />;
+    return <SessionDetail session={session} members={members} settings={settings} onBack={() => setActiveSessionId(null)} db={db} role={role} user={user} />;
   }
 
   return (
@@ -632,7 +640,12 @@ const SessionLogManager = ({ sessions, practices, members, settings, db, role })
       <div className="flex justify-between items-end px-1">
         <h2 className="text-2xl font-bold text-[#725E77]">練團日誌</h2>
         {role.admin && (
-           <button onClick={() => setShowManualCreate(true)} className="text-xs font-bold text-[#77ABC0] bg-[#F0F4F5] px-3 py-1.5 rounded-lg flex items-center gap-1 hover:bg-[#E0E7EA]"><FilePlus size={14}/> 自訂日誌</button>
+           <button 
+             onClick={() => setShowManualCreate(true)} 
+             className="text-xs font-bold text-[#77ABC0] bg-[#F0F4F5] px-3 py-1.5 rounded-lg flex items-center gap-1 hover:bg-[#E0E7EA]"
+           >
+             <FilePlus size={14}/> 自訂日誌
+           </button>
         )}
       </div>
       
@@ -669,7 +682,10 @@ const SessionLogManager = ({ sessions, practices, members, settings, db, role })
               <span className="bg-[#A8D8E2]/20 text-[#6E7F9B] text-[10px] font-bold px-2 py-0.5 rounded border border-[#A8D8E2]/30">{s.date}</span>
               <h3 className="font-bold text-xl mt-1 text-[#725E77]">{s.tracks?.length || 0} 首歌</h3>
             </div>
-            <div className="bg-[#FDFBF7] p-2 rounded-full text-[#C5B8BF] group-hover:bg-[#E5C3D3]/20 group-hover:text-[#CBABCA] transition"><ChevronDown className="-rotate-90" size={20}/></div>
+            <div className="flex items-center gap-2">
+                {role.admin && <button onClick={(e) => handleDeleteSession(e, s.id)} className="p-1 text-[#BC8F8F] opacity-0 group-hover:opacity-100 hover:text-red-600 transition"><Trash2 size={16}/></button>}
+                <div className="bg-[#FDFBF7] p-2 rounded-full text-[#C5B8BF] group-hover:bg-[#E5C3D3]/20 group-hover:text-[#CBABCA] transition"><ChevronDown className="-rotate-90" size={20}/></div>
+            </div>
           </div>
           <div className="text-[10px] text-[#C5B8BF] mt-1 flex items-center gap-1"><MapPin size={10}/> {s.location}</div>
         </div>
@@ -678,59 +694,77 @@ const SessionLogManager = ({ sessions, practices, members, settings, db, role })
   );
 };
 
-// --- Session Detail ---
-const SessionDetail = ({ session, members, settings, onBack, db, role }) => {
+// --- 日誌詳情 ---
+const SessionDetail = ({ session, members, settings, onBack, db, role, user }) => {
   const [tab, setTab] = useState('tracks'); 
   const [funNotes, setFunNotes] = useState(session.funNotes || "");
+  const [editingLocation, setEditingLocation] = useState(false);
   const [location, setLocation] = useState(session.location || "圓頭音樂");
-  const [isEditingLoc, setIsEditingLoc] = useState(false);
 
-  const handleUpdate = async () => { if (!db) return; await updateDoc(getDocRef(db, 'logs', session.id), { funNotes, location }); setIsEditingLoc(false); };
+  const handleUpdateNotes = async () => {
+    if (!db) return;
+    await updateDoc(getDocRef(db, 'logs', session.id), { funNotes });
+  };
+
+  const handleUpdateLocation = async () => {
+     if (!db) return;
+     await updateDoc(getDocRef(db, 'logs', session.id), { location });
+     setEditingLocation(false);
+  };
 
   return (
     <div className="animate-in fade-in duration-300">
       <button onClick={onBack} className="flex items-center gap-1 text-[#C5B8BF] font-bold text-sm mb-4 hover:text-[#725E77]"><ChevronDown className="rotate-90" size={16}/> 返回列表</button>
       <div className="bg-white p-6 rounded-[32px] shadow-sm border border-[#E0E0D9] mb-6">
         <h1 className="text-3xl font-black text-[#725E77]">{session.date}</h1>
-        {isEditingLoc ? (
-           <div className="flex gap-2 mt-1"><input className="bg-[#FDFBF7] border border-[#77ABC0] rounded-lg px-2 py-1 text-sm text-[#725E77]" value={location} onChange={e=>setLocation(e.target.value)} /><button onClick={handleUpdate} className="text-[#77ABC0]"><Check size={16}/></button></div>
+        
+        {editingLocation ? (
+          <div className="flex gap-2 mt-1">
+             <input className="bg-[#FDFBF7] border border-[#77ABC0] rounded-lg px-2 py-1 text-sm text-[#725E77]" value={location} onChange={e=>setLocation(e.target.value)} />
+             <button onClick={handleUpdateLocation} className="text-[#77ABC0]"><Check size={16}/></button>
+          </div>
         ) : (
-           <div className="flex items-center gap-2 text-[#C5B8BF] text-sm font-bold mt-1 group cursor-pointer" onClick={() => setIsEditingLoc(true)}>
+          <div className="flex items-center gap-2 text-[#C5B8BF] text-sm font-bold mt-1 group cursor-pointer" onClick={() => setEditingLocation(true)}>
              <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}`} target="_blank" className="flex items-center gap-2 hover:text-[#77ABC0] transition" onClick={(e) => e.stopPropagation()}>
                <MapPin size={14}/> {location}
              </a>
              <Pencil size={12} className="opacity-0 group-hover:opacity-100 transition"/>
           </div>
         )}
+
         <div className="mt-4 bg-[#F2D7DD]/20 p-3 rounded-2xl border border-[#CBABCA]/20 flex gap-2 items-start">
           <Smile size={16} className="text-[#F1CEBA] shrink-0 mt-0.5"/>
-          <textarea className="bg-transparent w-full text-xs font-bold text-[#725E77] outline-none resize-none h-auto min-h-[40px]" value={funNotes} onChange={e => setFunNotes(e.target.value)} onBlur={handleUpdate} placeholder="輸入不負責任備註..."/>
+          <textarea 
+            className="bg-transparent w-full text-xs font-bold text-[#725E77] outline-none resize-none h-auto min-h-[40px]" 
+            value={funNotes} 
+            onChange={e => setFunNotes(e.target.value)}
+            onBlur={handleUpdateNotes} 
+            placeholder="輸入不負責任備註..."
+          />
         </div>
       </div>
+
       <div className="flex bg-[#E0E0D9]/50 p-1 rounded-xl mb-6">
-        {['tracks', 'practice-fee', 'misc-fee'].map(t => (
-            <button key={t} onClick={() => setTab(t)} className={`flex-1 py-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1 ${tab === t ? 'bg-white shadow text-[#77ABC0]' : 'text-[#C5B8BF]'}`}>
-                {t === 'tracks' ? '曲目' : t === 'practice-fee' ? '練團費' : '雜支'}
-            </button>
-        ))}
+        <button onClick={() => setTab('tracks')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1 ${tab === 'tracks' ? 'bg-white shadow text-[#77ABC0]' : 'text-[#C5B8BF]'}`}><Music2 size={14}/> 曲目</button>
+        <button onClick={() => setTab('practice-fee')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1 ${tab === 'practice-fee' ? 'bg-white shadow text-[#77ABC0]' : 'text-[#C5B8BF]'}`}><ShieldCheck size={14}/> 練團費</button>
+        <button onClick={() => setTab('misc-fee')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1 ${tab === 'misc-fee' ? 'bg-white shadow text-[#77ABC0]' : 'text-[#C5B8BF]'}`}><Coffee size={14}/> 雜支分攤</button>
       </div>
+
       <div className="bg-white rounded-[32px] border border-[#E0E0D9] p-2 min-h-[300px]">
-        {tab === 'tracks' && <TrackList session={session} db={db} />}
-        {tab === 'practice-fee' && <PracticeFeeCalculator session={session} members={members} settings={settings} role={role} />}
-        {tab === 'misc-fee' && <MiscFeeCalculator session={session} members={members} db={db} />}
+        {tab === 'tracks' && <TrackList session={session} db={db} user={user} role={role} />}
+        {tab === 'practice-fee' && <PracticeFeeCalculator session={session} members={members} settings={settings} db={db} role={role} />}
+        {tab === 'misc-fee' && <MiscFeeCalculator session={session} members={members} db={db} user={user} />}
       </div>
     </div>
   );
 };
 
-// --- TrackList ---
-const TrackList = ({ session, db }) => {
+// --- TrackList (修復留言功能) ---
+const TrackList = ({ session, db, user, role }) => {
   const [expandedTrack, setExpandedTrack] = useState(null);
   const [newTrackName, setNewTrackName] = useState("");
   const [newComment, setNewComment] = useState("");
   const tracks = session.tracks || [];
-  const auth = getAuth();
-  const currentUser = auth.currentUser;
 
   const handleAddTrack = async () => {
     if (!newTrackName.trim() || !db) return;
@@ -743,7 +777,10 @@ const TrackList = ({ session, db }) => {
     if (!newComment.trim()) return;
     const updatedTracks = tracks.map(t => {
       if (t.id === trackId) {
-        return { ...t, comments: [...(t.comments || []), { user: currentUser?.displayName || '團員', text: newComment, uid: currentUser?.uid }] };
+        return { 
+           ...t, 
+           comments: [...(t.comments || []), { user: user?.displayName || '團員', text: newComment, uid: user?.uid }] 
+        };
       }
       return t;
     });
@@ -769,22 +806,34 @@ const TrackList = ({ session, db }) => {
       {tracks.map(t => (
         <div key={t.id} className="border border-[#E0E0D9] rounded-2xl overflow-hidden">
           <div className="bg-[#FAFAF9] p-4 flex justify-between items-center cursor-pointer" onClick={() => setExpandedTrack(expandedTrack === t.id ? null : t.id)}>
-            <span className="font-bold text-[#725E77]">{t.title}</span>
+            <div className="flex items-center gap-3">
+              <span className={`w-2.5 h-2.5 rounded-full ${t.status === 'ready' ? 'bg-[#77ABC0]' : 'bg-[#F1CEBA]'}`}></span>
+              <span className="font-bold text-[#725E77]">{t.title}</span>
+            </div>
             <ChevronDown size={16} className={`text-[#C5B8BF] ${expandedTrack === t.id ? 'rotate-180' : ''}`}/>
           </div>
           {expandedTrack === t.id && (
             <div className="p-4 bg-white border-t border-[#E0E0D9] space-y-3">
-              {(t.comments || []).map((c, i) => (
+              {t.link && <a href={t.link} target="_blank" className="flex items-center gap-2 text-xs text-[#77ABC0] font-bold bg-[#A8D8E2]/20 p-2 rounded-lg"><Play size={14}/> {t.link}</a>}
+              <div className="space-y-2">
+                {(t.comments || []).map((c, i) => (
                   <div key={i} className="text-xs bg-[#FDFBF7] p-2 rounded-lg flex justify-between items-start group">
                       <div><span className="font-bold text-[#725E77]">{c.user}:</span> {c.text}</div>
-                      {(c.uid === currentUser?.uid || ADMIN_EMAILS.includes(currentUser?.email)) && (
+                      {(c.uid === user?.uid || role.admin) && (
                           <button onClick={() => handleDeleteComment(t.id, i)} className="text-[#BC8F8F] opacity-0 group-hover:opacity-100"><Trash2 size={12}/></button>
                       )}
                   </div>
               ))}
-              <div className="flex gap-2">
-                 <input className="w-full bg-[#FDFBF7] text-xs p-2 rounded-lg outline-none text-[#725E77]" placeholder="輸入留言..." value={newComment} onChange={e => setNewComment(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAddComment(t.id)} />
-                 <button onClick={() => handleAddComment(t.id)} className="text-[#77ABC0]"><Check size={16}/></button>
+                <div className="flex gap-2">
+                   <input 
+                     className="w-full bg-[#FDFBF7] text-xs p-2 rounded-lg outline-none text-[#725E77]" 
+                     placeholder="輸入留言..." 
+                     value={newComment}
+                     onChange={e => setNewComment(e.target.value)}
+                     onKeyDown={e => e.key === 'Enter' && handleAddComment(t.id)}
+                   />
+                   <button onClick={() => handleAddComment(t.id)} className="text-[#77ABC0]"><Check size={16}/></button>
+                </div>
               </div>
             </div>
           )}
@@ -798,41 +847,61 @@ const TrackList = ({ session, db }) => {
   );
 };
 
-// --- PracticeFeeCalculator ---
-const PracticeFeeCalculator = ({ session, members, settings, role }) => {
+// --- 練團費計算機 (限制: Admin 或 財務) ---
+const PracticeFeeCalculator = ({ session, members, settings, role, db }) => {
   const [selectedIds, setSelectedIds] = useState(members.filter(m => m.attendance?.includes(session.date)).map(m => m.id));
   const [hours, setHours] = useState(2);
   const [hasKB, setHasKB] = useState(true);
   const [bankAccount, setBankAccount] = useState(settings?.studioBankAccount || "");
+  const [editingBank, setEditingBank] = useState(false);
+
   const total = (hours * (settings?.studioRate || 350)) + (hasKB ? (settings?.kbRate || 200) : 0);
   const perPerson = selectedIds.length > 0 ? Math.ceil(total / selectedIds.length) : 0;
+
+  const handleUpdateBank = async () => {
+      if(!db) return;
+      await updateDoc(getDocRef(db, 'general', 'info'), { settings: { ...settings, studioBankAccount: bankAccount } });
+      setEditingBank(false);
+  };
+
   const copyText = () => {
     const names = selectedIds.map(id => members.find(m => m.id === id)?.nickname).join('、');
     const text = `📅 ${session.date} 練團費用\n----------------\n⏱️ 時數：${hours}hr\n🎹 KB租借：${hasKB?'有':'無'}\n👥 分攤人：${names}\n----------------\n💰 總金額：$${total}\n👉 每人應付：$${perPerson}\n\n匯款帳號：\n${bankAccount}`;
-    secureCopy(text);
+    if(secureCopy(text)) { alert("複製成功！"); }
   };
+
   return (
     <div className="p-4 space-y-5">
       <div className="bg-[#F0F4F5] p-4 rounded-2xl text-center border border-[#A8D8E2]/30">
         <div className="text-3xl font-black text-[#77ABC0] mb-1">${total}</div>
         <div className="text-xs font-bold text-[#6E7F9B]">每人 <span className="text-lg text-[#725E77]">${perPerson}</span></div>
       </div>
-      {role.finance ? (
-        <div className="space-y-3">
-           <div className="flex gap-2">
-             {[2, 3].map(h => <button key={h} onClick={() => setHours(h)} className={`flex-1 py-2 rounded-xl text-xs font-bold ${hours === h ? 'bg-[#725E77] text-white' : 'bg-[#FDFBF7] text-[#C5B8BF]'}`}>{h}hr</button>)}
-             <button onClick={() => setHasKB(!hasKB)} className={`flex-1 py-2 rounded-xl text-xs font-bold ${hasKB ? 'bg-[#77ABC0] text-white' : 'bg-[#FDFBF7] text-[#C5B8BF]'}`}>KB {hasKB?'+':'-'}</button>
-           </div>
-           <div className="flex flex-wrap gap-2">{members.map(m => (<button key={m.id} onClick={() => setSelectedIds(prev => prev.includes(m.id) ? prev.filter(i => i!==m.id) : [...prev, m.id])} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition ${selectedIds.includes(m.id) ? 'bg-[#A8D8E2]/20 border-[#A8D8E2] text-[#5F8794]' : 'bg-white border-[#E0E0D9] text-[#C5B8BF]'}`}>{m.nickname}</button>))}</div>
-           <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-xs text-[#725E77] outline-none" value={bankAccount} onChange={(e) => setBankAccount(e.target.value)} />
-        </div>
-      ) : <div className="text-center text-[#CBABCA] text-xs py-4"><Lock size={20} className="inline"/> 僅財務大臣可編輯</div>}
-      <button onClick={copyText} className="w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 bg-[#77ABC0] text-white"><Copy size={16}/> 複製請款文</button>
+      
+      <div className="space-y-3">
+          <div className="flex gap-2">
+            {[2, 3].map(h => <button key={h} onClick={() => setHours(h)} className={`flex-1 py-2 rounded-xl text-xs font-bold ${hours === h ? 'bg-[#725E77] text-white' : 'bg-[#FDFBF7] text-[#C5B8BF]'}`}>{h}hr</button>)}
+            <button onClick={() => setHasKB(!hasKB)} className={`flex-1 py-2 rounded-xl text-xs font-bold ${hasKB ? 'bg-[#77ABC0] text-white' : 'bg-[#FDFBF7] text-[#C5B8BF]'}`}>KB {hasKB?'+':'-'}</button>
+          </div>
+          <div>
+            <label className="text-[10px] font-bold text-[#C5B8BF] mb-2 block uppercase">出席確認</label>
+            <div className="flex flex-wrap gap-2">
+              {members.map(m => (
+                <button key={m.id} onClick={() => setSelectedIds(prev => prev.includes(m.id) ? prev.filter(i => i!==m.id) : [...prev, m.id])} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition ${selectedIds.includes(m.id) ? 'bg-[#A8D8E2]/20 border-[#A8D8E2] text-[#5F8794]' : 'bg-white border-[#E0E0D9] text-[#C5B8BF]'}`}>{m.nickname}</button>
+              ))}
+            </div>
+          </div>
+          <div className="flex gap-2 items-center">
+             <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-xs text-[#725E77] border border-transparent focus:border-[#77ABC0] outline-none" value={bankAccount} onChange={(e) => setBankAccount(e.target.value)} disabled={!editingBank} />
+             {(role.admin || role.finance) && !editingBank && <button onClick={()=>setEditingBank(true)}><Pencil size={16} className="text-[#C5B8BF]"/></button>}
+             {editingBank && <button onClick={handleUpdateBank}><Check size={16} className="text-[#77ABC0]"/></button>}
+          </div>
+      </div>
+      <button onClick={copyText} className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition bg-[#77ABC0] text-white`}>{<Copy size={16}/>} 複製請款文</button>
     </div>
   );
 };
 
-// --- MiscFeeCalculator ---
+// --- 雜支分攤 ---
 const MiscFeeCalculator = ({ session, members, db }) => {
   const [items, setItems] = useState(session.miscExpenses || []); 
   const [newItem, setNewItem] = useState({ item: '', amount: '', payerId: '', splitters: [] });
@@ -842,9 +911,16 @@ const MiscFeeCalculator = ({ session, members, db }) => {
   const handleToggleSettle = (idx) => { const newItems = [...items]; newItems[idx].isSettled = !newItems[idx].isSettled; handleUpdate(newItems); };
   const handleDelete = (idx) => { if (confirm("刪除此筆雜支？")) handleUpdate(items.filter((_, i) => i !== idx)); };
   
+  // Toggle Splitter
+  const toggleSplitter = (memberId) => {
+     const current = newItem.splitters || [];
+     if (current.includes(memberId)) setNewItem({...newItem, splitters: current.filter(id => id !== memberId)});
+     else setNewItem({...newItem, splitters: [...current, memberId]});
+  };
+
   const copyText = () => {
     let text = `🍱 ${session.date} 雜支明細\n----------------\n`;
-    items.filter(i => !i.isSettled).forEach(i => { text += `🔹 ${i.item} ($${i.amount}) - ${members.find(m=>m.id===i.payerId)?.nickname}\n`; });
+    items.filter(i => !i.isSettled).forEach(i => { text += `🔹 ${i.item} ($${i.amount}) - 墊付:${members.find(m=>m.id===i.payerId)?.nickname}\n`; });
     secureCopy(text);
   };
   return (
@@ -852,6 +928,7 @@ const MiscFeeCalculator = ({ session, members, db }) => {
       <div className="bg-[#FDFBF7] p-4 rounded-2xl border border-[#E0E0D9] space-y-3">
          <div className="flex gap-2"><input className="flex-1 bg-white p-2 rounded-xl text-xs outline-none" placeholder="項目" value={newItem.item} onChange={e=>setNewItem({...newItem, item: e.target.value})}/><input className="w-20 bg-white p-2 rounded-xl text-xs outline-none" type="number" placeholder="$" value={newItem.amount} onChange={e=>setNewItem({...newItem, amount: e.target.value})}/></div>
          <div className="flex items-center gap-2 overflow-x-auto pb-1"><span className="text-[10px] font-bold text-[#C5B8BF] shrink-0">墊付:</span>{members.map(m => (<button key={m.id} onClick={()=>setNewItem({...newItem, payerId: m.id})} className={`px-2 py-1 rounded-lg text-[10px] font-bold border shrink-0 ${newItem.payerId === m.id ? 'bg-[#F1CEBA] text-white border-[#F1CEBA]' : 'bg-white text-[#C5B8BF] border-[#E0E0D9]'}`}>{m.nickname}</button>))}</div>
+         <div className="flex items-center gap-2 overflow-x-auto pb-1"><span className="text-[10px] font-bold text-[#C5B8BF] shrink-0">分攤:</span>{members.map(m => (<button key={m.id} onClick={()=>toggleSplitter(m.id)} className={`px-2 py-1 rounded-lg text-[10px] font-bold border shrink-0 ${newItem.splitters?.includes(m.id) ? 'bg-[#725E77] text-white border-[#725E77]' : 'bg-white text-[#C5B8BF] border-[#E0E0D9]'}`}>{m.nickname}</button>))}</div>
          <button onClick={handleAdd} className="w-full bg-[#725E77] text-white text-xs font-bold py-2 rounded-xl">加入清單</button>
       </div>
       <div className="space-y-2">{items.map((it, idx) => (
@@ -866,20 +943,38 @@ const MiscFeeCalculator = ({ session, members, db }) => {
 };
 
 // --- Alcohol Manager ---
-const AlcoholManager = ({ alcohols, members, settings, db, role }) => {
+const AlcoholManager = ({ alcohols, members, settings, db, role, user }) => {
   const [tab, setTab] = useState('list'); 
-  const [newAlcohol, setNewAlcohol] = useState({ name: '', type: '威士忌', level: 100, rating: 5, note: '' });
+  const [newAlcohol, setNewAlcohol] = useState({ name: '', type: '威士忌', level: 100, rating: 5, note: '', comments: [] });
   const [showAdd, setShowAdd] = useState(false);
+  const [editingId, setEditingId] = useState(null);
   const [customType, setCustomType] = useState("");
   const alcoholOptions = settings?.alcoholTypes || ['紅酒', '白酒', '清酒', '氣泡酒', '啤酒', '威士忌', '其他'];
 
-  const handleAdd = async () => {
+  const handleSave = async () => {
     if (!newAlcohol.name || !db) return;
     const finalType = newAlcohol.type === '其他' ? customType : newAlcohol.type;
-    await addDoc(getCollectionRef(db, 'alcohol'), { ...newAlcohol, type: finalType });
-    setShowAdd(false);
+    const data = { ...newAlcohol, type: finalType };
+    
+    if (editingId) await updateDoc(getDocRef(db, 'alcohol', editingId), data);
+    else await addDoc(getCollectionRef(db, 'alcohol'), data);
+    
+    setShowAdd(false); setEditingId(null);
+    setNewAlcohol({ name: '', type: '威士忌', level: 100, rating: 5, note: '', comments: [] });
   };
+
   const handleDelete = async (id) => { if (!db || !confirm("確定刪除此酒品？")) return; await deleteDoc(getDocRef(db, 'alcohol', id)); };
+  
+  const handleEdit = (a) => {
+      setNewAlcohol(a); setEditingId(a.id); setShowAdd(true);
+  };
+  
+  // 酒櫃留言
+  const handleAddComment = async (id, text, currentComments) => {
+      if(!text.trim()) return;
+      const newComment = { user: user.displayName, text, uid: user.uid };
+      await updateDoc(getDocRef(db, 'alcohol', id), { comments: [...(currentComments||[]), newComment] });
+  };
 
   return (
     <div className="space-y-4 animate-in slide-in-from-right-8">
@@ -889,7 +984,8 @@ const AlcoholManager = ({ alcohols, members, settings, db, role }) => {
       </div>
       {tab === 'list' ? (
         <div className="space-y-3">
-          {role.alcohol && <button onClick={() => setShowAdd(true)} className="w-full py-3 text-[#CBABCA] font-bold text-xs flex items-center justify-center gap-1 border border-dashed border-[#CBABCA] rounded-2xl hover:bg-[#FFF5F7]"><Plus size={14}/> 新增酒品</button>}
+          {role.alcohol && <button onClick={() => { setEditingId(null); setNewAlcohol({ name: '', type: '威士忌', level: 100, rating: 5, note: '', comments: [] }); setShowAdd(true); }} className="w-full py-3 text-[#CBABCA] font-bold text-xs flex items-center justify-center gap-1 border border-dashed border-[#CBABCA] rounded-2xl hover:bg-[#FFF5F7]"><Plus size={14}/> 新增酒品</button>}
+          
           {showAdd && (
             <div className="bg-white p-4 rounded-[24px] border border-[#77ABC0] space-y-3">
                <input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="酒名" value={newAlcohol.name} onChange={e=>setNewAlcohol({...newAlcohol, name: e.target.value})} />
@@ -897,18 +993,36 @@ const AlcoholManager = ({ alcohols, members, settings, db, role }) => {
                  {alcoholOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
                </select>
                {newAlcohol.type === '其他' && <input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="輸入自訂種類" value={customType} onChange={e=>setCustomType(e.target.value)} />}
-               <div className="flex gap-2"><button onClick={() => setShowAdd(false)} className="flex-1 p-2 text-xs text-slate-400">取消</button><button onClick={handleAdd} className="flex-1 p-2 bg-[#77ABC0] text-white rounded-lg text-xs font-bold">儲存</button></div>
+               <div className="flex items-center gap-2 text-xs text-[#C5B8BF]">
+                 <span>剩餘量: {newAlcohol.level}%</span>
+                 <input type="range" min="0" max="100" className="flex-1" value={newAlcohol.level} onChange={e=>setNewAlcohol({...newAlcohol, level: e.target.value})} />
+               </div>
+               <input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="備註..." value={newAlcohol.note} onChange={e=>setNewAlcohol({...newAlcohol, note: e.target.value})} />
+               <div className="flex gap-2"><button onClick={() => setShowAdd(false)} className="flex-1 p-2 text-xs text-slate-400">取消</button><button onClick={handleSave} className="flex-1 p-2 bg-[#77ABC0] text-white rounded-lg text-xs font-bold">儲存</button></div>
             </div>
           )}
+
           {alcohols.map(a => (
-            <div key={a.id} className="bg-white p-5 rounded-[28px] border border-[#E0E0D9] shadow-sm flex gap-4 items-start relative group">
-              <div className="bg-[#F0EEE6] w-16 h-20 rounded-2xl flex items-center justify-center shrink-0"><Wine className="text-[#D6C592]" size={32} /></div>
-              <div className="flex-1">
-                <h3 className="font-bold text-lg text-[#725E77]">{a.name}</h3>
-                <p className="text-xs font-bold text-[#8B8C89] mb-2">{a.type}</p>
-                <div className="mt-3 bg-[#FDFBF7] p-2 rounded-xl text-xs text-[#6E7F9B]">💬 {a.note}</div>
-              </div>
-              {role.alcohol && <button onClick={() => handleDelete(a.id)} className="absolute top-4 right-4 text-[#BC8F8F] opacity-0 group-hover:opacity-100 transition"><Trash2 size={16}/></button>}
+            <div key={a.id} className="bg-white p-5 rounded-[28px] border border-[#E0E0D9] shadow-sm flex flex-col gap-3 relative group">
+               <div className="flex gap-4 items-start">
+                  <div className="bg-[#F0EEE6] w-16 h-20 rounded-2xl flex items-center justify-center shrink-0"><Wine className="text-[#D6C592]" size={32} /></div>
+                  <div className="flex-1" onClick={() => role.alcohol && handleEdit(a)}>
+                    <h3 className="font-bold text-lg text-[#725E77]">{a.name}</h3>
+                    <p className="text-xs font-bold text-[#8B8C89] mb-1">{a.type}</p>
+                    <div className="w-full h-1.5 bg-[#F0F4F5] rounded-full overflow-hidden mb-2"><div className="h-full bg-[#D6C592]" style={{width: `${a.level}%`}}></div></div>
+                    <div className="text-xs text-[#6E7F9B]">{a.note}</div>
+                  </div>
+                  {role.alcohol && <button onClick={() => handleDelete(a.id)} className="text-[#BC8F8F] opacity-0 group-hover:opacity-100 transition"><Trash2 size={16}/></button>}
+               </div>
+               {/* 品酒筆記區 */}
+               <div className="pt-2 border-t border-[#F0F4F5]">
+                  {(a.comments || []).map((c, idx) => (
+                      <div key={idx} className="text-[10px] text-[#6E7F9B] mb-1"><span className="font-bold">{c.user}:</span> {c.text}</div>
+                  ))}
+                  <div className="flex gap-2 mt-2">
+                     <input className="w-full bg-[#FDFBF7] p-1.5 rounded-lg text-xs outline-none" placeholder="寫下品飲心得..." onKeyDown={e=>{if(e.key==='Enter'){handleAddComment(a.id, e.target.value, a.comments); e.target.value=''}}} />
+                  </div>
+               </div>
             </div>
           ))}
         </div>
