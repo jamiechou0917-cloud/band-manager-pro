@@ -11,8 +11,7 @@ import {
   Wallet, Receipt, Coffee, Gift, Zap, LayoutGrid, List,
   PartyPopper, Headphones, Speaker, Star, Image as ImageIcon, Disc,
   Ghost, Pencil, Trash2, Lock, Save, MinusCircle, FilePlus, AlertTriangle,
-  Database, Download, Filter, Search, Clock, ListPlus, Edit, CheckSquare,
-  Cat, Dog, Bird, Rabbit, Turtle, Fish 
+  Database, Download, Filter, Search, Clock, ListPlus, Edit, CheckSquare
 } from 'lucide-react';
 
 // ==========================================
@@ -32,19 +31,17 @@ const ROLE_ALCOHOL_NAME = "李家賢";
 // --- 🎸 樂團專屬設定 ---
 const BAND_NAME = "不開玩笑";
 
-// --- 🎨 莫蘭迪色調與頭像設定 ---
+// --- 🎨 莫蘭迪色調 ---
 const MORANDI_COLORS = ['#8C736F', '#AAB8AB', '#B7B7BD', '#CCD2CC', '#9F8D8B', '#8FA39A'];
-const ANIMAL_ICONS = [Cat, Dog, Rabbit, Bird, Turtle, Fish];
 
-const getMemberStyle = (name) => {
-  if (!name) return { color: MORANDI_COLORS[0], Icon: Cat };
+// 工具: 生成名字對應顏色
+const stringToColor = (str) => {
+  if (!str) return MORANDI_COLORS[0];
   let hash = 0;
-  for (let i = 0; i < name.length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
   }
-  const colorIndex = Math.abs(hash) % MORANDI_COLORS.length;
-  const iconIndex = Math.abs(hash) % ANIMAL_ICONS.length;
-  return { color: MORANDI_COLORS[colorIndex], Icon: ANIMAL_ICONS[iconIndex] };
+  return MORANDI_COLORS[Math.abs(hash) % MORANDI_COLORS.length];
 };
 
 const BandLogo = () => (
@@ -123,13 +120,13 @@ const getZodiac = (dateStr) => {
     if (!next) return true;
     const d1 = new Date(2000, x.d[0]-1, x.d[1]);
     const d2 = new Date(2000, next.d[0]-1, next.d[1]);
-    const curr = new Date(2000, m-1, d);
+    const curr = new Date(2000, m-1, day);
     return curr >= d1 && curr < d2;
   });
   return (z[idx]?.n || "") + "座";
 };
 
-// --- Firebase Config ---
+// --- Firebase ---
 const USER_CONFIG = {
   apiKey: "AIzaSyDb36ftpgHzZEH2IuYOsPmJEiKgeVhLWKk",
   authDomain: "bandmanager-a3049.firebaseapp.com",
@@ -182,28 +179,26 @@ const App = () => {
   
   const appId = USER_CONFIG.appId; 
 
-  // Auth 監聽
+  // Auth 監聽 (移除寫死白名單)
   useEffect(() => {
     if (auth) {
       getRedirectResult(auth).catch(e => console.log(e));
       const unsubAuth = onAuthStateChanged(auth, async (u) => {
         setUser(u);
-        if (!u && IS_CANVAS) {
-            setTimeout(() => setUser({ uid: 'demo', displayName: '體驗帳號', photoURL: null, email: 'demo@test.com' }), 1000);
-        }
+        if (!u && IS_CANVAS) setTimeout(() => setUser({ uid: 'demo', displayName: '體驗帳號', photoURL: null, email: 'demo@test.com' }), 1000);
       });
       if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) signInWithCustomToken(auth, __initial_auth_token).catch(e => console.error(e));
       return () => unsubAuth();
     } else { setLoading(false); }
   }, []);
 
-  // 權限與白名單檢查
+  // 權限與白名單檢查 (完全依賴資料庫)
   useEffect(() => {
     if (user) {
       const userEmail = user.email;
       const isAdmin = ADMIN_EMAILS.includes(userEmail);
       
-      // 白名單檢查 (非 Canvas 環境)
+      // 動態白名單檢查
       if (!IS_CANVAS && !isAdmin && members.length > 0) {
          const isMember = members.some(m => m.email === userEmail);
          if (!isMember) {
@@ -213,7 +208,6 @@ const App = () => {
          }
       }
 
-      // 職位權限分配
       const financeMember = members.find(m => m.realName === ROLE_FINANCE_NAME || m.nickname === ROLE_FINANCE_NAME);
       const isFinance = isAdmin || (financeMember && financeMember.email === userEmail);
       
@@ -230,6 +224,14 @@ const App = () => {
 
   // Firestore 資料監聽
   useEffect(() => {
+    // 預設資料防呆
+    const forceLoad = setTimeout(() => {
+        if (!generalData) {
+            setGeneralData(DEFAULT_GENERAL_DATA);
+            setLoading(false);
+        }
+    }, 2000);
+
     if (!db || !user) return;
     const unsubMembers = onSnapshot(getCollectionRef(db, 'members'), (snap) => setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() }))), (e) => {if(e.code==='permission-denied') console.warn("Perms error");});
     const unsubLogs = onSnapshot(getCollectionRef(db, 'logs'), (snap) => setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => new Date(b.date) - new Date(a.date))));
@@ -247,8 +249,16 @@ const App = () => {
         setDoc(getDocRef(db, 'general', 'info'), DEFAULT_GENERAL_DATA);
         setGeneralData(DEFAULT_GENERAL_DATA);
       }
+      setLoading(false);
+    }, (err) => {
+        console.warn("General data load failed", err);
+        setGeneralData(DEFAULT_GENERAL_DATA);
+        setLoading(false);
     });
-    return () => { unsubMembers(); unsubLogs(); unsubAlcohol(); unsubSongs(); unsubGeneral(); };
+    return () => { 
+        clearTimeout(forceLoad);
+        unsubMembers(); unsubLogs(); unsubAlcohol(); unsubSongs(); unsubGeneral(); 
+    };
   }, [user]);
 
   const handleLogin = async () => {
@@ -258,12 +268,11 @@ const App = () => {
   const handleLogout = async () => { await signOut(auth); setUser(null); };
 
   const renderContent = () => {
-    if (!generalData && activeTab === 'dashboard') return <div className="h-full flex items-center justify-center text-slate-400"><Loader2 className="animate-spin"/> 資料同步中...</div>;
     const data = generalData || DEFAULT_GENERAL_DATA;
 
     switch (activeTab) {
       case 'dashboard': return <DashboardView members={members} generalData={data} alcoholCount={alcohols.length} db={db} role={role} user={user} />;
-      case 'logs': return <SessionLogManager sessions={logs} practices={data.practices || []} members={members} settings={data.settings} db={db} role={role} />;
+      case 'logs': return <SessionLogManager sessions={logs} practices={data.practices || []} members={members} settings={data.settings} db={db} role={role} user={user} />;
       case 'alcohol': return <AlcoholManager alcohols={alcohols} members={members} settings={data.settings} db={db} role={role} user={user} />;
       case 'tech': return <TechView songs={songs} db={db} role={role} user={user} />;
       case 'admin': return <AdminDashboard members={members} logs={logs} generalData={data} db={db} />;
@@ -272,7 +281,8 @@ const App = () => {
   };
 
   if (loading) return <div className="h-screen flex justify-center items-center bg-[#FDFBF7]"><Loader2 className="animate-spin text-[#77ABC0]"/></div>;
-  const showImage = !imgError && BAND_LOGO_BASE64;
+  const logoSrc = BAND_LOGO_BASE64 || BAND_LOGO_URL;
+  const showImage = logoSrc && !imgError;
   const handlePrankClick = (e) => { const btn = e.currentTarget; btn.style.transform = 'rotate(360deg) scale(1.2)'; setTimeout(() => { setShowPrankModal(true); btn.style.transform = 'rotate(0deg) scale(1)'; }, 300); };
 
   if (!user) return (
@@ -294,12 +304,11 @@ const App = () => {
           <span className="font-bold text-lg tracking-wide text-[#77ABC0]">{BAND_NAME}</span>
         </div>
         <div className="flex items-center gap-2">
-          {role.admin && <span className="bg-rose-100 text-rose-600 text-[10px] px-2 py-0.5 rounded-full font-bold">Admin</span>}
           {role.admin && (
              <button onClick={() => setActiveTab('admin')} className={`p-1.5 rounded-full transition ${activeTab === 'admin' ? 'bg-[#77ABC0] text-white' : 'text-[#CBABCA] hover:bg-[#F2D7DD]'}`}><Settings size={18}/></button>
           )}
-          <div className="w-8 h-8 rounded-full border-2 border-white shadow-sm overflow-hidden bg-slate-200" style={{backgroundColor: user.photoURL ? 'transparent' : getMemberStyle(user.displayName).color}}>
-             {user.photoURL ? <img src={user.photoURL} alt="U" /> : <div className="w-full h-full flex items-center justify-center text-xs font-bold text-white"><User size={16}/></div>}
+          <div className="w-8 h-8 rounded-full border-2 border-white shadow-sm overflow-hidden bg-slate-200" style={{backgroundColor: stringToColor(user.displayName)}}>
+             {user.photoURL ? <img src={user.photoURL} alt="U" /> : <div className="w-full h-full flex items-center justify-center text-xs font-bold text-white">{user.displayName?.[0]}</div>}
           </div>
           <button onClick={handleLogout} className="p-1.5 bg-[#FDFBF7] rounded-full text-[#BC8F8F] hover:bg-[#F2D7DD] transition"><LogOut size={16} /></button>
         </div>
@@ -362,14 +371,32 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
     if (!member) return;
     const canEdit = role.admin || (user.email && member.email === user.email);
     if (!canEdit) { alert("只能修改自己的出席狀態喔！"); return; }
-    const current = member.attendance || [];
-    const newAtt = current.includes(dateStr) ? current.filter(d => d !== dateStr) : [...current, dateStr];
-    await updateDoc(getDocRef(db, 'members', memberId), { attendance: newAtt });
+    const currentAttendance = member.attendance || [];
+    let newAttendance;
+    if (currentAttendance.includes(dateStr)) {
+      newAttendance = currentAttendance.filter(d => d !== dateStr);
+    } else {
+      newAttendance = [...currentAttendance, dateStr];
+    }
+    await updateDoc(getDocRef(db, 'members', memberId), { attendance: newAttendance });
   };
-  
-  const handleSaveMember = async (data) => { if (!db) return; data.id ? await updateDoc(getDocRef(db, 'members', data.id), data) : await addDoc(getCollectionRef(db, 'members'), data); setEditingMember(null); };
-  const handleDeleteMember = async (id) => { if (confirm("確定刪除？")) await deleteDoc(getDocRef(db, 'members', id)); };
-  
+
+  const handleSaveMember = async (memberData) => {
+    if (!db) return;
+    if (memberData.id) {
+      await updateDoc(getDocRef(db, 'members', memberData.id), memberData);
+    } else {
+      await addDoc(getCollectionRef(db, 'members'), memberData);
+    }
+    setEditingMember(null);
+  };
+
+  const handleDeleteMember = async (id) => {
+    if (confirm("確定要刪除這位團員嗎？")) {
+       await deleteDoc(getDocRef(db, 'members', id));
+    }
+  };
+
   const addToCalendarUrl = () => {
     if (!isValidDate) return "#";
     const start = nextDateObj.toISOString().replace(/-|:|\.\d\d\d/g, "");
@@ -381,15 +408,24 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
     <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
       <div className="bg-white p-6 rounded-3xl w-full max-w-sm space-y-4 max-h-[80vh] overflow-y-auto">
         <h3 className="font-bold text-lg text-[#725E77]">設定本月練團時間</h3>
+        <p className="text-xs text-slate-400">請一次規劃好本月的場次，日誌會自動連動。</p>
         {practices.map((p, idx) => (
           <div key={idx} className="bg-[#FDFBF7] p-3 rounded-xl border border-[#E0E0D9] space-y-2 relative">
              <button onClick={() => setPractices(practices.filter((_, i) => i !== idx))} className="absolute top-2 right-2 text-[#BC8F8F]"><MinusCircle size={16}/></button>
              <div className="text-xs text-[#C5B8BF] font-bold">開始</div>
-             <input type="datetime-local" className="w-full bg-white p-2 rounded-lg text-sm" value={p.date} onChange={e => { const newP = [...practices]; newP[idx].date = e.target.value; setPractices(newP); }} />
+             <input type="datetime-local" className="w-full bg-white p-2 rounded-lg text-sm" value={p.date} onChange={e => {
+               const newP = [...practices]; newP[idx].date = e.target.value; setPractices(newP);
+             }} />
              <div className="text-xs text-[#C5B8BF] font-bold">結束</div>
-             <input type="datetime-local" className="w-full bg-white p-2 rounded-lg text-sm" value={p.endTime || ''} onChange={e => { const newP = [...practices]; newP[idx].endTime = e.target.value; setPractices(newP); }} />
-             <input type="text" className="w-full bg-white p-2 rounded-lg text-sm" placeholder="標題" value={p.title} onChange={e => { const newP = [...practices]; newP[idx].title = e.target.value; setPractices(newP); }} />
-             <input type="text" className="w-full bg-white p-2 rounded-lg text-sm" placeholder="地點" value={p.location} onChange={e => { const newP = [...practices]; newP[idx].location = e.target.value; setPractices(newP); }} />
+             <input type="datetime-local" className="w-full bg-white p-2 rounded-lg text-sm" value={p.endTime || ''} onChange={e => {
+               const newP = [...practices]; newP[idx].endTime = e.target.value; setPractices(newP);
+             }} />
+             <input type="text" className="w-full bg-white p-2 rounded-lg text-sm" placeholder="標題" value={p.title} onChange={e => {
+               const newP = [...practices]; newP[idx].title = e.target.value; setPractices(newP);
+             }} />
+             <input type="text" className="w-full bg-white p-2 rounded-lg text-sm" placeholder="地點" value={p.location} onChange={e => {
+               const newP = [...practices]; newP[idx].location = e.target.value; setPractices(newP);
+             }} />
           </div>
         ))}
         <button onClick={() => setPractices([...practices, { date: new Date().toISOString(), endTime: '', title: '新練團', location: '圓頭音樂' }])} className="w-full py-2 border-2 border-dashed border-[#77ABC0] text-[#77ABC0] rounded-xl font-bold flex justify-center items-center gap-1"><Plus size={16}/> 增加場次</button>
@@ -417,7 +453,9 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
           </div>
           <div className="text-lg text-[#E0E7EA] font-bold mb-4 flex items-center gap-2">
             <Clock size={18}/> 
-            {isValidDate ? `${new Date(nextPractice.date).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute:'2-digit' })}` : "時間未定"}
+            {isValidDate 
+              ? `${nextDateObj.toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute:'2-digit' })} ${nextPractice.endTime ? `- ${new Date(nextPractice.endTime).toLocaleTimeString('zh-TW', { hour: '2-digit', minute:'2-digit' })}` : ''}`
+              : "時間未定"}
           </div>
           <div className="flex items-center gap-2 bg-black/20 w-fit px-4 py-2 rounded-full backdrop-blur-sm border border-white/10"><MapPin size={16} className="text-[#E0E7EA]"/><span className="text-sm font-bold">{nextPractice.location}</span></div>
         </div>
@@ -429,22 +467,24 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
         <div className="bg-[#E8F1E9] p-4 rounded-2xl border border-[#A8D8E2]/50 flex items-center gap-3 shadow-sm"><div className="bg-white p-2.5 rounded-full shadow-sm"><Check size={20} className="text-[#77ABC0]"/></div><div><div className="text-[10px] font-bold text-[#6E7F9B] uppercase">本月練團</div><div className="text-xl font-black text-[#725E77]">{practices.length} 場</div></div></div>
       </div>
 
+      {/* 點名表 */}
       <div>
         <div className="flex items-center justify-between px-1 mb-2"><h3 className="font-bold text-xl text-[#725E77]">本月練團點名</h3>{role.admin && <button onClick={() => setEditingMember({})} className="text-xs font-bold text-[#77ABC0] bg-[#F0F4F5] px-3 py-1.5 rounded-lg flex items-center gap-1"><Plus size={14}/> 新增團員</button>}</div>
         <div className="grid grid-cols-1 gap-3">
-          {members.map(m => {
-            const style = getMemberStyle(m.nickname || m.realName);
-            const Icon = style.Icon;
-            return (
+          {members.map(m => (
             <div key={m.id} onClick={() => setExpandedMember(expandedMember === m.id ? null : m.id)} className={`bg-white p-4 rounded-2xl border shadow-sm transition-all cursor-pointer ${expandedMember === m.id ? 'border-[#CBABCA] ring-1 ring-[#CBABCA]/30' : 'border-[#E0E0D9]'}`}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white font-bold text-lg border-2 border-white shadow-sm overflow-hidden" style={{backgroundColor: style.color}}><Icon size={24} /></div>
+                  {/* 頭像改回文字縮寫 */}
+                  <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white font-bold text-lg border-2 border-white shadow-sm overflow-hidden" style={{backgroundColor: stringToColor(m.nickname || m.realName)}}>
+                     {m.nickname?.[0] || 'M'}
+                  </div>
                   <div>
                     <div className="flex items-center gap-2"><span className="font-bold text-[#725E77] text-lg">{m.nickname}</span>{m.birthday && new Date().getMonth()+1 === parseInt(m.birthday.split('-')[1]) && <span className="bg-[#BC8F8F] text-white text-[10px] px-2 py-0.5 rounded-full font-bold flex items-center gap-1"><Cake size={10} /> 壽星</span>}</div>
                     <div className="flex items-center gap-1 text-xs text-[#C5B8BF] font-medium"><span className="text-[#77ABC0] font-bold">{m.instrument}</span><span>•</span><span>{m.realName}</span></div>
                   </div>
                 </div>
+                {/* 互動式日期出席按鈕 */}
                 <div className="flex gap-1.5 overflow-x-auto max-w-[120px] scrollbar-hide">
                   {practices.map(p => {
                     const dateStr = p.date ? p.date.split('T')[0] : ''; // 防呆
@@ -480,7 +520,6 @@ const MemberEditModal = ({ member, onClose, onSave }) => {
            <input className="bg-[#FDFBF7] p-3 rounded-xl text-sm" placeholder="本名" value={form.realName || ''} onChange={e => setForm({...form, realName: e.target.value})} />
         </div>
         <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm border border-[#77ABC0]/30" placeholder="Google Email (權限綁定用)" value={form.email || ''} onChange={e => setForm({...form, email: e.target.value})} />
-        {/* 移除頭像網址，改用自動配色 */}
         <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm" placeholder="樂器 (Vocal, Bass...)" value={form.instrument || ''} onChange={e => setForm({...form, instrument: e.target.value})} />
         <input type="date" className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm" value={form.birthday || ''} onChange={e => setForm({...form, birthday: e.target.value})} />
         <textarea className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm h-20" placeholder="備註..." value={form.note || ''} onChange={e => setForm({...form, note: e.target.value})} />
@@ -529,7 +568,14 @@ const SessionLogManager = ({ sessions, practices, members, settings, db, appId, 
     <div className="space-y-4 animate-in slide-in-from-right-8">
       <div className="flex justify-between items-end px-1">
         <h2 className="text-2xl font-bold text-[#725E77]">練團日誌</h2>
-        {role.admin && <button onClick={() => setShowManualCreate(true)} className="text-xs font-bold text-[#77ABC0] bg-[#F0F4F5] px-3 py-1.5 rounded-lg flex items-center gap-1 hover:bg-[#E0E7EA]"><FilePlus size={14}/> 自訂日誌</button>}
+        {role.admin && (
+           <button 
+             onClick={() => setShowManualCreate(true)} 
+             className="text-xs font-bold text-[#77ABC0] bg-[#F0F4F5] px-3 py-1.5 rounded-lg flex items-center gap-1 hover:bg-[#E0E7EA]"
+           >
+             <FilePlus size={14}/> 自訂日誌
+           </button>
+        )}
       </div>
       
       {role.admin && pendingPractices.map(p => (
@@ -621,6 +667,7 @@ const SessionDetail = ({ session, members, settings, onBack, db, role, user }) =
   );
 };
 
+// --- TrackList ---
 const TrackList = ({ session, db, user, role }) => {
   const [expandedTrack, setExpandedTrack] = useState(null);
   const [newTrackName, setNewTrackName] = useState("");
