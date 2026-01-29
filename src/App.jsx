@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signInWithCustomToken, signOut, signInWithRedirect, getRedirectResult } from 'firebase/auth';
+import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signInWithCustomToken, signOut, signInWithRedirect, getRedirectResult, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { 
   Music2, Mic2, Users, ClipboardList, Beer, Calendar, 
@@ -12,11 +12,11 @@ import {
   PartyPopper, Headphones, Speaker, Star, Image as ImageIcon, Disc,
   Ghost, Pencil, Trash2, Lock, Save, MinusCircle, FilePlus, AlertTriangle,
   Database, Download, Filter, Search, Clock, CheckSquare,
-  User, ExternalLink as OpenIcon // 使用通用圖示
+  User 
 } from 'lucide-react';
 
 // ==========================================
-// 🛡️ 錯誤邊界元件
+// 🛡️ 錯誤邊界元件 (防止白頁)
 // ==========================================
 class ErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { hasError: false, error: null }; }
@@ -63,7 +63,10 @@ const stringToColor = (str) => {
 };
 
 const getMemberStyle = (name) => {
-    return { color: stringToColor(name) };
+    return { 
+        color: stringToColor(name), 
+        Icon: User 
+    };
 };
 
 const BandLogo = () => (
@@ -73,6 +76,7 @@ const BandLogo = () => (
   </div>
 );
 
+// --- 工具函式 ---
 const secureCopy = (text) => {
   try {
      const textArea = document.createElement("textarea");
@@ -130,7 +134,7 @@ const getZodiac = (dateStr) => {
   return (z[idx]?.n || "") + "座";
 };
 
-// --- Firebase ---
+// --- Firebase Config ---
 const USER_CONFIG = {
   apiKey: "AIzaSyDb36ftpgHzZEH2IuYOsPmJEiKgeVhLWKk",
   authDomain: "bandmanager-a3049.firebaseapp.com",
@@ -184,7 +188,7 @@ const App = () => {
   
   const appId = USER_CONFIG.appId; 
 
-  // 偵測 In-App Browser (LINE, FB, IG)
+  // 偵測 In-App Browser
   useEffect(() => {
     const ua = navigator.userAgent || navigator.vendor || window.opera;
     if (/Line|FBAN|FBAV|Instagram|Twitter/i.test(ua)) {
@@ -195,13 +199,20 @@ const App = () => {
   // Auth 監聽
   useEffect(() => {
     if (auth) {
-      getRedirectResult(auth).catch(e => console.log(e));
-      const unsubAuth = onAuthStateChanged(auth, async (u) => {
-        setUser(u);
-        if (!u && IS_CANVAS) setTimeout(() => setUser({ uid: 'demo', displayName: '體驗帳號', email: 'demo@test.com' }), 1000);
-      });
+      // ⚠️ 關鍵修正：強制設定持久化，避免 redirect 後掉登入狀態
+      setPersistence(auth, browserLocalPersistence)
+        .then(() => {
+           const unsubAuth = onAuthStateChanged(auth, async (u) => {
+             setUser(u);
+             if (!u && IS_CANVAS) setTimeout(() => setUser({ uid: 'demo', displayName: '體驗帳號', email: 'demo@test.com' }), 1000);
+           });
+           return () => unsubAuth();
+        })
+        .catch((error) => {
+           console.error("Persistence error:", error);
+        });
+      
       if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) signInWithCustomToken(auth, __initial_auth_token).catch(e => console.error(e));
-      return () => unsubAuth();
     } else { setLoading(false); }
   }, []);
 
@@ -268,9 +279,15 @@ const App = () => {
   }, [user]);
 
   const handleLogin = async () => {
-    // 強制使用 Redirect 模式，這是手機版最穩定的方式
-    try { await signInWithRedirect(auth, googleProvider); } 
-    catch (err) { console.error("Login failed", err); }
+    // ⚠️ 關鍵修正：改回使用 signInWithPopup，因為 redirect 在某些手機瀏覽器會造成無限迴圈
+    // 現代手機瀏覽器對於「使用者點擊觸發的 Popup」通常是允許的
+    try { 
+      await signInWithPopup(auth, googleProvider); 
+    } catch (err) { 
+      console.error("Popup failed", err);
+      // 如果 Popup 真的被擋，才提示使用者
+      alert("登入彈窗被阻擋，請允許彈出視窗後重試，或是使用 Chrome/Safari 瀏覽器。");
+    }
   };
   
   const handleLogout = async () => { await signOut(auth); setUser(null); };
@@ -287,16 +304,13 @@ const App = () => {
     }
   };
 
-  // In-App Browser 阻擋頁面
   if (isInAppBrowser) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center p-8 bg-slate-100 text-center">
         <div className="bg-white p-6 rounded-3xl shadow-xl w-full max-w-sm">
           <div className="text-4xl mb-4">⚠️</div>
           <h2 className="text-xl font-bold text-slate-800 mb-2">無法在 App 內登入</h2>
-          <p className="text-sm text-slate-600 mb-6">
-            Google 安全政策限制了 LINE / FB 內建瀏覽器的登入功能。
-          </p>
+          <p className="text-sm text-slate-600 mb-6">Google 安全政策限制了此瀏覽器的登入功能。</p>
           <div className="bg-blue-50 p-4 rounded-xl text-left text-sm text-blue-800 mb-6">
             <p className="font-bold mb-2">請依照以下步驟操作：</p>
             <ol className="list-decimal pl-4 space-y-1">
@@ -304,7 +318,6 @@ const App = () => {
               <li>選擇 <span className="font-bold">「以預設瀏覽器開啟」</span> (Safari/Chrome)</li>
             </ol>
           </div>
-          <div className="text-xs text-slate-400">系統偵測到您目前可能正在使用 LINE 或 Facebook 瀏覽器</div>
         </div>
       </div>
     );
@@ -319,8 +332,8 @@ const App = () => {
         <div className="bg-white p-8 rounded-[32px] shadow-xl w-full max-w-sm">
            <div className="flex justify-center mb-6"><BandLogo /></div>
            <h1 className="text-2xl font-black text-[#725E77] mb-2">{BAND_NAME}</h1>
-           <button onClick={handleLogin} className="w-full bg-[#77ABC0] text-white py-4 rounded-2xl font-bold flex items-center justify-center gap-2 shadow-lg shadow-[#77ABC0]/30 active:scale-95 transition"><ShieldCheck size={20}/> Google 登入</button>
-           <div className="mt-6 p-3 bg-indigo-50 rounded-xl text-xs text-indigo-800 text-left border border-indigo-100">本系統僅限受邀團員登入。建議使用 Safari 或 Chrome 開啟。</div>
+           <button onClick={handleLogin} className="w-full bg-[#77ABC0] text-white py-4 rounded-2xl font-bold flex items-center justify-center gap-2 shadow-lg active:scale-95 transition"><ShieldCheck size={20}/> Google 登入</button>
+           <div className="mt-6 p-3 bg-indigo-50 rounded-xl text-xs text-indigo-800 text-left border border-indigo-100">本系統僅限受邀團員登入。請使用 Safari 或 Chrome 開啟。</div>
         </div>
       </div>
   );
@@ -333,7 +346,10 @@ const App = () => {
           <span className="font-bold text-lg tracking-wide text-[#77ABC0]">{BAND_NAME}</span>
         </div>
         <div className="flex items-center gap-2">
-          {role.admin && <button onClick={() => setActiveTab('admin')} className={`p-1.5 rounded-full transition ${activeTab === 'admin' ? 'bg-[#77ABC0] text-white' : 'text-[#CBABCA] hover:bg-[#F2D7DD]'}`}><Settings size={18}/></button>}
+          {role.admin && <span className="bg-rose-100 text-rose-600 text-[10px] px-2 py-0.5 rounded-full font-bold">Admin</span>}
+          {role.admin && (
+             <button onClick={() => setActiveTab('admin')} className={`p-1.5 rounded-full transition ${activeTab === 'admin' ? 'bg-[#77ABC0] text-white' : 'text-[#CBABCA] hover:bg-[#F2D7DD]'}`}><Settings size={18}/></button>
+          )}
           <div className="w-8 h-8 rounded-full border-2 border-white shadow-sm overflow-hidden bg-slate-200" style={{backgroundColor: stringToColor(user.displayName)}}>
              {user.photoURL ? <img src={user.photoURL} alt="U" /> : <div className="w-full h-full flex items-center justify-center text-xs font-bold text-white"><User size={16}/></div>}
           </div>
@@ -380,6 +396,7 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
   
   const now = new Date();
   
+  // 安全的日期排序 (防呆修正)
   const sortedPractices = [...practices]
     .filter(p => p && p.date) 
     .map(p => ({...p, dateObj: new Date(p.date), endObj: p.endTime ? new Date(p.endTime) : new Date(new Date(p.date).getTime() + 2*60*60*1000) }))
@@ -396,21 +413,16 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
   const toggleAttendance = async (memberId, dateStr) => {
     const member = members.find(m => m.id === memberId);
     if (!member) return;
-    
-    const currentUserEmail = (user.email || '').trim().toLowerCase();
-    const memberEmail = (member.email || '').trim().toLowerCase();
-    
-    const isSelf = currentUserEmail && memberEmail && currentUserEmail === memberEmail;
-    const canEdit = role.admin || isSelf;
-
-    if (!canEdit) { 
-        alert(`只能修改自己的出席狀態喔！\n\n您的帳號: ${user.email}\n此欄位帳號: ${member.email || "未設定"}`); 
-        return; 
+    const canEdit = role.admin || (user.email && member.email === user.email);
+    if (!canEdit) { alert("只能修改自己的出席狀態喔！"); return; }
+    const currentAttendance = member.attendance || [];
+    let newAttendance;
+    if (currentAttendance.includes(dateStr)) {
+      newAttendance = currentAttendance.filter(d => d !== dateStr);
+    } else {
+      newAttendance = [...currentAttendance, dateStr];
     }
-
-    const current = member.attendance || [];
-    const newAtt = current.includes(dateStr) ? current.filter(d => d !== dateStr) : [...current, dateStr];
-    await updateDoc(getDocRef(db, 'members', memberId), { attendance: newAtt });
+    await updateDoc(getDocRef(db, 'members', memberId), { attendance: newAttendance });
   };
   
   const handleSaveMember = async (data) => { if (!db) return; data.id ? await updateDoc(getDocRef(db, 'members', data.id), data) : await addDoc(getCollectionRef(db, 'members'), data); setEditingMember(null); };
@@ -432,11 +444,19 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
           <div key={idx} className="bg-[#FDFBF7] p-3 rounded-xl border border-[#E0E0D9] space-y-2 relative">
              <button onClick={() => setPractices(practices.filter((_, i) => i !== idx))} className="absolute top-2 right-2 text-[#BC8F8F]"><MinusCircle size={16}/></button>
              <div className="text-xs text-[#C5B8BF] font-bold">開始</div>
-             <input type="datetime-local" step="1800" className="w-full bg-white p-2 rounded-lg text-sm" value={p.date} onChange={e => { const newP = [...practices]; newP[idx].date = e.target.value; setPractices(newP); }} />
+             <input type="datetime-local" className="w-full bg-white p-2 rounded-lg text-sm" value={p.date} onChange={e => {
+               const newP = [...practices]; newP[idx].date = e.target.value; setPractices(newP);
+             }} />
              <div className="text-xs text-[#C5B8BF] font-bold">結束</div>
-             <input type="datetime-local" step="1800" className="w-full bg-white p-2 rounded-lg text-sm" value={p.endTime || ''} onChange={e => { const newP = [...practices]; newP[idx].endTime = e.target.value; setPractices(newP); }} />
-             <input type="text" className="w-full bg-white p-2 rounded-lg text-sm" placeholder="標題" value={p.title} onChange={e => { const newP = [...practices]; newP[idx].title = e.target.value; setPractices(newP); }} />
-             <input type="text" className="w-full bg-white p-2 rounded-lg text-sm" placeholder="地點" value={p.location} onChange={e => { const newP = [...practices]; newP[idx].location = e.target.value; setPractices(newP); }} />
+             <input type="datetime-local" className="w-full bg-white p-2 rounded-lg text-sm" value={p.endTime || ''} onChange={e => {
+               const newP = [...practices]; newP[idx].endTime = e.target.value; setPractices(newP);
+             }} />
+             <input type="text" className="w-full bg-white p-2 rounded-lg text-sm" placeholder="標題" value={p.title} onChange={e => {
+               const newP = [...practices]; newP[idx].title = e.target.value; setPractices(newP);
+             }} />
+             <input type="text" className="w-full bg-white p-2 rounded-lg text-sm" placeholder="地點" value={p.location} onChange={e => {
+               const newP = [...practices]; newP[idx].location = e.target.value; setPractices(newP);
+             }} />
           </div>
         ))}
         <button onClick={() => setPractices([...practices, { date: new Date().toISOString(), endTime: '', title: '新練團', location: '圓頭音樂' }])} className="w-full py-2 border-2 border-dashed border-[#77ABC0] text-[#77ABC0] rounded-xl font-bold flex justify-center items-center gap-1"><Plus size={16}/> 增加場次</button>
