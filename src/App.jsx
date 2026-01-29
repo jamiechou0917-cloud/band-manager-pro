@@ -11,11 +11,11 @@ import {
   Wallet, Receipt, Coffee, Gift, Zap, LayoutGrid, List,
   PartyPopper, Headphones, Speaker, Star, Image as ImageIcon, Disc,
   Ghost, Pencil, Trash2, Lock, Save, MinusCircle, FilePlus, AlertTriangle,
-  Database, Download, Filter, Search
+  Database, Download, Filter, Search, Clock
 } from 'lucide-react';
 
 // ==========================================
-// 🔐 權限管理區 (請在此設定)
+// 🔐 權限管理區
 // ==========================================
 
 // 1. 團員白名單
@@ -116,7 +116,7 @@ const exportToCSV = (data, filename) => {
   }
 };
 
-// --- 工具: 生日顯示 (隱藏年份) ---
+// --- 工具: 生日顯示 ---
 const formatBirthdayDisplay = (dateStr) => {
   if (!dateStr) return "未知";
   const parts = dateStr.split('-');
@@ -161,7 +161,7 @@ const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__f
 const IS_CANVAS = typeof __firebase_config !== 'undefined';
 const storageAppId = IS_CANVAS ? (typeof __app_id !== 'undefined' ? __app_id : 'band-manager-preview') : null;
 
-// --- 關鍵修正：更新 getCollectionRef 和 getDocRef 以接受 db 參數 ---
+// Helper 函式
 const getCollectionRef = (db, name) => {
   if (IS_CANVAS && storageAppId) {
     return collection(db, 'artifacts', storageAppId, 'public', 'data', name);
@@ -202,31 +202,31 @@ const App = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [imgError, setImgError] = useState(false);
   const [showPrankModal, setShowPrankModal] = useState(false);
-  
-  // 權限與資料狀態
   const [role, setRole] = useState({ admin: false, finance: false, alcohol: false });
+
+  // Data States
   const [members, setMembers] = useState([]);
   const [logs, setLogs] = useState([]);
   const [alcohols, setAlcohols] = useState([]);
   const [songs, setSongs] = useState([]);
   const [generalData, setGeneralData] = useState(null);
 
-  // Auth 監聽
+  const appId = USER_CONFIG.appId; 
+
+  // Auth Effect
   useEffect(() => {
     if (auth) {
       getRedirectResult(auth).catch(e => console.log(e));
       const unsubAuth = onAuthStateChanged(auth, async (u) => {
         if (u) {
-          // --- 白名單檢查 ---
           if (!IS_CANVAS && !MEMBER_EMAILS.includes(u.email)) {
-            alert(`⛔ 抱歉，您的 Email (${u.email}) 不在團員名單中，無法存取本系統。\n請聯繫團長加入名單。`);
+            alert(`⛔ 抱歉，您的 Email (${u.email}) 不在團員名單中。`);
             await signOut(auth);
             setUser(null); setLoading(false); return;
           }
           setUser(u); setLoading(false);
         } else {
           setUser(null); setLoading(false);
-          // 移除自動登入，僅保留預覽環境的方便性
           if (IS_CANVAS) setTimeout(() => setUser({ uid: 'demo', displayName: '體驗帳號', photoURL: null, email: 'demo@test.com' }), 1000);
         }
       });
@@ -239,44 +239,37 @@ const App = () => {
     }
   }, []);
 
-  // 權限計算
+  // Role Effect
   useEffect(() => {
     if (user) {
       const userEmail = user.email;
       const isAdmin = ADMIN_EMAILS.includes(userEmail);
-      
       const financeMember = members.find(m => m.realName === ROLE_FINANCE_NAME || m.nickname === ROLE_FINANCE_NAME);
       const isFinance = isAdmin || (financeMember && financeMember.email === userEmail);
-      
       const alcoholMember = members.find(m => m.realName === ROLE_ALCOHOL_NAME || m.nickname === ROLE_ALCOHOL_NAME);
       const isAlcohol = isAdmin || (alcoholMember && alcoholMember.email === userEmail);
-
       setRole({ admin: isAdmin, finance: isFinance, alcohol: isAlcohol });
     } else {
       setRole({ admin: false, finance: false, alcohol: false });
     }
   }, [user, members]);
 
-  // Firestore 資料監聽
+  // Firestore Effect
   useEffect(() => {
     if (!db || !user) return;
 
-    // 使用 helper 函式 (已修正為接受 db 參數)
-    const unsubMembers = onSnapshot(getCollectionRef(db, 'members'), (snap) => setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() }))), 
-      (err) => { if (err.code === 'permission-denied') console.warn("Permission denied. Check Firestore Rules."); });
-    
+    const unsubMembers = onSnapshot(getCollectionRef(db, 'members'), (snap) => setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() }))), (e)=>{if(e.code==='permission-denied') console.warn("Perms");});
     const unsubLogs = onSnapshot(getCollectionRef(db, 'logs'), (snap) => setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => new Date(b.date) - new Date(a.date))));
     const unsubAlcohol = onSnapshot(getCollectionRef(db, 'alcohol'), (snap) => setAlcohols(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubSongs = onSnapshot(getCollectionRef(db, 'songs'), (snap) => setSongs(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-    
     const unsubGeneral = onSnapshot(getDocRef(db, 'general', 'info'), (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
-        if (data.nextPractice && !data.practices) data.practices = [data.nextPractice]; 
+        if (data.nextPractice && !data.practices) data.practices = [data.nextPractice];
         setGeneralData(data);
       } else {
         setDoc(getDocRef(db, 'general', 'info'), DEFAULT_GENERAL_DATA);
-        setGeneralData(DEFAULT_GENERAL_DATA); // 立即設置，避免閃爍
+        setGeneralData(DEFAULT_GENERAL_DATA);
       }
     });
 
@@ -285,19 +278,16 @@ const App = () => {
 
   const handleLogin = async () => {
     try { await signInWithPopup(auth, googleProvider); } 
-    catch (err) { 
-       console.warn("Popup failed, trying redirect");
-       signInWithRedirect(auth, googleProvider);
-    }
+    catch (err) { console.warn("Popup failed"); signInWithRedirect(auth, googleProvider); }
   };
   
-  const handleLogout = async () => {
-    await signOut(auth); setUser(null); setRole({ admin: false, finance: false, alcohol: false });
-  };
+  const handleLogout = async () => { await signOut(auth); setUser(null); };
 
   const renderContent = () => {
-    if (!generalData && activeTab === 'dashboard') return <div className="h-full flex items-center justify-center text-slate-400"><Loader2 className="animate-spin"/> 資料同步中...</div>;
+    // 確保有資料，避免崩潰
     const data = generalData || DEFAULT_GENERAL_DATA;
+    // 如果沒有資料且非預覽，顯示載入中
+    if (!generalData && !IS_CANVAS) return <div className="h-full flex items-center justify-center text-slate-400"><Loader2 className="animate-spin mr-2"/> 資料讀取中...</div>;
 
     switch (activeTab) {
       case 'dashboard': return <DashboardView members={members} generalData={data} alcoholCount={alcohols.length} db={db} role={role} user={user} />;
@@ -310,7 +300,6 @@ const App = () => {
   };
 
   if (loading) return <div className="h-screen flex justify-center items-center bg-[#FDFBF7]"><Loader2 className="animate-spin text-[#77ABC0]"/></div>;
-
   const logoSrc = BAND_LOGO_BASE64 || BAND_LOGO_URL;
   const showImage = logoSrc && !imgError;
   const handlePrankClick = (e) => {
@@ -325,13 +314,12 @@ const App = () => {
         <div className="bg-white p-8 rounded-[32px] shadow-xl max-w-sm w-full">
            <div className="flex justify-center mb-6"><BandLogo /></div>
            <h1 className="text-2xl font-black text-[#725E77] mb-2">{BAND_NAME}</h1>
-           <p className="text-[#6E7F9B] font-bold mb-4">樂團專用管理系統</p>
            <button onClick={handleLogin} className="w-full bg-[#77ABC0] text-white py-4 rounded-2xl font-bold flex items-center justify-center gap-2 shadow-lg shadow-[#77ABC0]/30 active:scale-95 transition">
              <ShieldCheck size={20}/> Google 登入
            </button>
            <div className="mt-6 p-3 bg-indigo-50 rounded-xl text-xs text-indigo-800 text-left border border-indigo-100">
              <div className="flex items-center gap-1 font-bold mb-1"><Lock size={12}/> 存取限制</div>
-             請使用手機 Chrome 或 Safari 開啟以確保登入順利。
+             本系統僅限受邀團員登入。若無法進入，請聯繫管理員加入白名單。
            </div>
         </div>
       </div>
@@ -404,15 +392,21 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
   const [editingMember, setEditingMember] = useState(null); 
   
   const now = new Date();
+  
+  // 安全的日期排序
   const sortedPractices = [...practices]
-    .map(p => ({...p, dateObj: new Date(p.date), endObj: p.endTime ? new Date(p.endTime) : new Date(new Date(p.date).getTime() + 2*60*60*1000) }))
+    .filter(p => p && p.date) // 過濾無效資料
+    .map(p => ({...p, dateObj: new Date(p.date)}))
     .sort((a,b) => a.dateObj - b.dateObj);
   
   const nextPractice = sortedPractices.find(p => p.dateObj >= now) || sortedPractices[sortedPractices.length - 1] || { date: new Date().toISOString(), title: '尚未安排', location: '圓頭音樂' };
   
+  // 安全計算日期差異
   const nextDateObj = new Date(nextPractice.date);
   const isValidDate = !isNaN(nextDateObj.getTime());
   const diffDays = isValidDate ? Math.ceil((nextDateObj - now) / (1000 * 60 * 60 * 24)) : 0; 
+  
+  const endTimeObj = nextPractice.endTime ? new Date(nextPractice.endTime) : (isValidDate ? new Date(nextDateObj.getTime() + 2*60*60*1000) : null);
 
   const handleUpdatePractices = async () => {
     if (!db) return;
@@ -426,36 +420,27 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
     const canEdit = role.admin || (user.email && member.email === user.email);
     if (!canEdit) { alert("只能修改自己的出席狀態喔！"); return; }
     const currentAttendance = member.attendance || [];
-    let newAttendance;
-    if (currentAttendance.includes(dateStr)) {
-      newAttendance = currentAttendance.filter(d => d !== dateStr);
-    } else {
-      newAttendance = [...currentAttendance, dateStr];
-    }
+    let newAttendance = currentAttendance.includes(dateStr) 
+      ? currentAttendance.filter(d => d !== dateStr) 
+      : [...currentAttendance, dateStr];
     await updateDoc(getDocRef(db, 'members', memberId), { attendance: newAttendance });
   };
 
   const handleSaveMember = async (memberData) => {
     if (!db) return;
-    if (memberData.id) {
-      await updateDoc(getDocRef(db, 'members', memberData.id), memberData);
-    } else {
-      await addDoc(getCollectionRef(db, 'members'), memberData);
-    }
+    if (memberData.id) await updateDoc(getDocRef(db, 'members', memberData.id), memberData);
+    else await addDoc(getCollectionRef(db, 'members'), memberData);
     setEditingMember(null);
   };
 
   const handleDeleteMember = async (id) => {
-    if (confirm("確定要刪除這位團員嗎？")) {
-       await deleteDoc(getDocRef(db, 'members', id));
-    }
+    if (confirm("確定要刪除這位團員嗎？")) await deleteDoc(getDocRef(db, 'members', id));
   };
 
   const addToCalendarUrl = () => {
     if (!isValidDate) return "#";
     const start = nextDateObj.toISOString().replace(/-|:|\.\d\d\d/g, "");
-    const endTime = nextPractice.endTime ? new Date(nextPractice.endTime) : new Date(nextDateObj.getTime() + 2*60*60*1000);
-    const end = endTime.toISOString().replace(/-|:|\.\d\d\d/g, ""); 
+    const end = endTimeObj ? endTimeObj.toISOString().replace(/-|:|\.\d\d\d/g, "") : start;
     return `https://www.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(nextPractice.title)}&dates=${start}/${end}&location=${encodeURIComponent(nextPractice.location)}`;
   };
 
@@ -557,7 +542,7 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
                 {/* 互動式日期出席按鈕 */}
                 <div className="flex gap-1.5 overflow-x-auto max-w-[120px] scrollbar-hide">
                   {practices.map(p => {
-                    const dateStr = p.date.split('T')[0];
+                    const dateStr = p.date.split('T')[0]; // Safe split needed here? p.date guaranteed by form
                     const isAttending = m.attendance?.includes(dateStr);
                     return (
                       <button 
@@ -624,14 +609,15 @@ const MemberEditModal = ({ member, onClose, onSave }) => {
 };
 
 // --- 2. 日誌管理器 ---
-const SessionLogManager = ({ sessions, scheduledDates, members, settings, db, appId, role }) => {
+const SessionLogManager = ({ sessions, scheduledDates, members, settings, db, role }) => {
   const [activeSessionId, setActiveSessionId] = useState(null);
   
   // scheduledDates 現在是 practices 陣列，需要先提取日期
   const practices = scheduledDates || []; 
-  const existingSessionDates = sessions.map(s => s.date);
 
+  // 安全過濾
   const pendingPractices = practices.filter(p => {
+      if(!p.date) return false;
       const pDate = p.date.split('T')[0];
       return !sessions.some(s => s.date.startsWith(pDate));
   }).sort((a,b) => new Date(a.date) - new Date(b.date));
@@ -724,18 +710,10 @@ const SessionLogManager = ({ sessions, scheduledDates, members, settings, db, ap
 const SessionDetail = ({ session, members, settings, onBack, db, role }) => {
   const [tab, setTab] = useState('tracks'); 
   const [funNotes, setFunNotes] = useState(session.funNotes || "");
-  const [editingLocation, setEditingLocation] = useState(false);
-  const [location, setLocation] = useState(session.location || "圓頭音樂");
 
   const handleUpdateNotes = async () => {
     if (!db) return;
     await updateDoc(getDocRef(db, 'logs', session.id), { funNotes });
-  };
-
-  const handleUpdateLocation = async () => {
-     if (!db) return;
-     await updateDoc(getDocRef(db, 'logs', session.id), { location });
-     setEditingLocation(false);
   };
 
   return (
@@ -743,18 +721,7 @@ const SessionDetail = ({ session, members, settings, onBack, db, role }) => {
       <button onClick={onBack} className="flex items-center gap-1 text-[#C5B8BF] font-bold text-sm mb-4 hover:text-[#725E77]"><ChevronDown className="rotate-90" size={16}/> 返回列表</button>
       <div className="bg-white p-6 rounded-[32px] shadow-sm border border-[#E0E0D9] mb-6">
         <h1 className="text-3xl font-black text-[#725E77]">{session.date}</h1>
-        
-        {editingLocation ? (
-          <div className="flex gap-2 mt-1">
-             <input className="bg-[#FDFBF7] border border-[#77ABC0] rounded-lg px-2 py-1 text-sm text-[#725E77]" value={location} onChange={e=>setLocation(e.target.value)} />
-             <button onClick={handleUpdateLocation} className="text-[#77ABC0]"><Check size={16}/></button>
-          </div>
-        ) : (
-          <div className="flex items-center gap-2 text-[#C5B8BF] text-sm font-bold mt-1 group cursor-pointer" onClick={() => setEditingLocation(true)}>
-             <MapPin size={14}/> {location} <Pencil size={12} className="opacity-0 group-hover:opacity-100 transition"/>
-          </div>
-        )}
-
+        <div className="flex items-center gap-2 text-[#C5B8BF] text-sm font-bold mt-1"><MapPin size={14}/> {session.location}</div>
         <div className="mt-4 bg-[#F2D7DD]/20 p-3 rounded-2xl border border-[#CBABCA]/20 flex gap-2 items-start">
           <Smile size={16} className="text-[#F1CEBA] shrink-0 mt-0.5"/>
           <textarea 
@@ -782,7 +749,7 @@ const SessionDetail = ({ session, members, settings, onBack, db, role }) => {
   );
 };
 
-// --- TrackList (修復留言功能) ---
+// --- TrackList (任何人可編輯內容) ---
 const TrackList = ({ session, db }) => {
   const [expandedTrack, setExpandedTrack] = useState(null);
   const [newTrackName, setNewTrackName] = useState("");
@@ -968,13 +935,13 @@ const MiscFeeCalculator = ({ session, members, settings }) => {
         ))}
       </div>
 
-      <button onClick={copyText} className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition ${copied ? 'bg-[#8DA399] text-white' : 'bg-[#CBABCA] text-white'}`}>{copied ? <Check size={16}/> : <Copy size={16}/>} 複製雜支明細</button>
+      <button onClick={copyText} className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition ${copied ? 'bg-[#8DA399] text-white' : 'bg-[#CBABCA] text-white'}`}>{copied ? <Check size={16}/> : <Copy size={16}/>} 複製請款文</button>
     </div>
   );
 };
 
 // --- 4. Alcohol Manager (補貨計算機) ---
-const AlcoholManager = ({ alcohols, members, settings, db, appId, role }) => {
+const AlcoholManager = ({ alcohols, members, settings, db, role }) => {
   const [tab, setTab] = useState('list'); // list, calculator
   const [newAlcohol, setNewAlcohol] = useState({ name: '', type: 'Whiskey', level: 100, rating: 5, note: '' });
   const [showAdd, setShowAdd] = useState(false);
