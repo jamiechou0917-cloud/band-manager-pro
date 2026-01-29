@@ -199,7 +199,6 @@ const App = () => {
   // Auth 監聽
   useEffect(() => {
     if (auth) {
-      // ⚠️ 關鍵修正：強制設定持久化，避免 redirect 後掉登入狀態
       setPersistence(auth, browserLocalPersistence)
         .then(() => {
            const unsubAuth = onAuthStateChanged(auth, async (u) => {
@@ -279,13 +278,10 @@ const App = () => {
   }, [user]);
 
   const handleLogin = async () => {
-    // ⚠️ 關鍵修正：改回使用 signInWithPopup，因為 redirect 在某些手機瀏覽器會造成無限迴圈
-    // 現代手機瀏覽器對於「使用者點擊觸發的 Popup」通常是允許的
     try { 
       await signInWithPopup(auth, googleProvider); 
     } catch (err) { 
       console.error("Popup failed", err);
-      // 如果 Popup 真的被擋，才提示使用者
       alert("登入彈窗被阻擋，請允許彈出視窗後重試，或是使用 Chrome/Safari 瀏覽器。");
     }
   };
@@ -351,7 +347,7 @@ const App = () => {
              <button onClick={() => setActiveTab('admin')} className={`p-1.5 rounded-full transition ${activeTab === 'admin' ? 'bg-[#77ABC0] text-white' : 'text-[#CBABCA] hover:bg-[#F2D7DD]'}`}><Settings size={18}/></button>
           )}
           <div className="w-8 h-8 rounded-full border-2 border-white shadow-sm overflow-hidden bg-slate-200" style={{backgroundColor: stringToColor(user.displayName)}}>
-             {user.photoURL ? <img src={user.photoURL} alt="U" /> : <div className="w-full h-full flex items-center justify-center text-xs font-bold text-white"><User size={16}/></div>}
+              {user.photoURL ? <img src={user.photoURL} alt="U" /> : <div className="w-full h-full flex items-center justify-center text-xs font-bold text-white"><User size={16}/></div>}
           </div>
           <button onClick={handleLogout} className="p-1.5 bg-[#FDFBF7] rounded-full text-[#BC8F8F] hover:bg-[#F2D7DD] transition"><LogOut size={16} /></button>
         </div>
@@ -394,6 +390,15 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
   const [expandedMember, setExpandedMember] = useState(null);
   const [editingMember, setEditingMember] = useState(null); 
   
+  // 🔥🔥🔥 關鍵修復：這裡加入了 useEffect 來監聽雲端資料變化 🔥🔥🔥
+  // 這會確保當 generalData.practices 更新時（例如手機端修改了），本地端狀態也會跟著更新。
+  // 但是，如果正在編輯中 (editingPractice 為 true)，我們暫時不同步，以免打斷輸入。
+  useEffect(() => {
+    if (!editingPractice && generalData.practices) {
+      setPractices(generalData.practices);
+    }
+  }, [generalData.practices, editingPractice]);
+
   const now = new Date();
   
   // 安全的日期排序 (防呆修正)
@@ -492,15 +497,15 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
         </div>
         <PartyPopper className="absolute -right-4 -bottom-4 text-white opacity-10 rotate-12" size={140} />
       </div>
-      
+       
       <div className="bg-white p-4 rounded-2xl border border-[#E0E0D9]">
          <div className="font-bold text-[#725E77] mb-2 flex items-center gap-2"><Calendar size={18}/> 本月場次列表</div>
          <div className="space-y-2">
             {sortedPractices.map(p => (
                <div key={p.date} className="flex justify-between items-center text-sm p-2 bg-slate-50 rounded-lg">
                   <div>
-                     <div className="font-bold text-slate-700">{new Date(p.date).toLocaleDateString()} {p.title}</div>
-                     <div className="text-xs text-slate-400">{new Date(p.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} @ {p.location}</div>
+                      <div className="font-bold text-slate-700">{new Date(p.date).toLocaleDateString()} {p.title}</div>
+                      <div className="text-xs text-slate-400">{new Date(p.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} @ {p.location}</div>
                   </div>
                </div>
             ))}
@@ -671,9 +676,9 @@ const SessionDetail = ({ session, members, settings, onBack, db, role, user }) =
   const handleUpdateLocation = async () => { if (!db) return; await updateDoc(getDocRef(db, 'logs', session.id), { location }); setEditingLocation(false); };
   
   const toggleSessionAttendance = async (memberId) => {
-     const currentAtt = session.attendance || []; 
-     const newAtt = currentAtt.includes(memberId) ? currentAtt.filter(id => id !== memberId) : [...currentAtt, memberId];
-     await updateDoc(getDocRef(db, 'logs', session.id), { attendance: newAtt });
+      const currentAtt = session.attendance || []; 
+      const newAtt = currentAtt.includes(memberId) ? currentAtt.filter(id => id !== memberId) : [...currentAtt, memberId];
+      await updateDoc(getDocRef(db, 'logs', session.id), { attendance: newAtt });
   };
 
   return (
