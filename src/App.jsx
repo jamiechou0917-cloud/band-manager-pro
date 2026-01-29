@@ -11,22 +11,21 @@ import {
   Wallet, Receipt, Coffee, Gift, Zap, LayoutGrid, List,
   PartyPopper, Headphones, Speaker, Star, Image as ImageIcon, Disc,
   Ghost, Pencil, Trash2, Lock, Save, MinusCircle, FilePlus, AlertTriangle,
-  Database, Download, Filter, Search, Clock, ListPlus, CheckSquare,
-  Cat, Dog, Bird, Rabbit, Turtle, Fish 
+  Database, Download, Filter, Search, Clock, ListPlus, Edit, CheckSquare,
+  Cat, Dog, Bird, Rabbit, Turtle, Fish
 } from 'lucide-react';
 
 // ==========================================
 // 🔐 權限管理區
 // ==========================================
 
-// 1. 超級管理員 (最後的救援鑰匙，保留您的 Email)
-// ⚠️ 一般團員已不需要寫在這裡，系統會自動對照「成員名單」資料庫
+// 1. 超級管理員 (最後的救援鑰匙)
 const ADMIN_EMAILS = [
   "jamie.chou0917@gmail.com",
   "demo@test.com"
 ];
 
-// 2. 特殊職位名稱 (需與團員名單中的本名/暱稱一致)
+// 2. 特殊職位名稱
 const ROLE_FINANCE_NAME = "陳昱維"; 
 const ROLE_ALCOHOL_NAME = "李家賢"; 
 
@@ -364,7 +363,7 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
   const addToCalendarUrl = () => {
     if (!isValidDate) return "#";
     const start = nextDateObj.toISOString().replace(/-|:|\.\d\d\d/g, "");
-    const end = nextPractice.endTime ? new Date(nextPractice.endTime).toISOString().replace(/-|:|\.\d\d\d/g, "") : start;
+    const end = nextPractice.endTime ? new Date(nextPractice.endTime).toISOString().replace(/-|:|\.\d\d\d/g, "") : new Date(nextDateObj.getTime() + 2*60*60*1000).toISOString().replace(/-|:|\.\d\d\d/g, "");
     return `https://www.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(nextPractice.title)}&dates=${start}/${end}&location=${encodeURIComponent(nextPractice.location)}`;
   };
 
@@ -469,6 +468,7 @@ const MemberEditModal = ({ member, onClose, onSave }) => {
            <input className="bg-[#FDFBF7] p-3 rounded-xl text-sm" placeholder="本名" value={form.realName || ''} onChange={e => setForm({...form, realName: e.target.value})} />
         </div>
         <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm border border-[#77ABC0]/30" placeholder="Google Email (權限綁定用)" value={form.email || ''} onChange={e => setForm({...form, email: e.target.value})} />
+        {/* 移除頭像網址，改用自動配色 */}
         <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm" placeholder="樂器 (Vocal, Bass...)" value={form.instrument || ''} onChange={e => setForm({...form, instrument: e.target.value})} />
         <input type="date" className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm" value={form.birthday || ''} onChange={e => setForm({...form, birthday: e.target.value})} />
         <textarea className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm h-20" placeholder="備註..." value={form.note || ''} onChange={e => setForm({...form, note: e.target.value})} />
@@ -479,14 +479,10 @@ const MemberEditModal = ({ member, onClose, onSave }) => {
 };
 
 // --- 2. 日誌管理器 ---
-const SessionLogManager = ({ sessions, practices, members, settings, db, role, user }) => {
+const SessionLogManager = ({ sessions, practices, members, settings, db, appId, role, user }) => {
   const [activeSessionId, setActiveSessionId] = useState(null);
-  
-  // 防呆：確保 practices 是陣列
-  const safePractices = Array.isArray(practices) ? practices : [];
   const existingDates = sessions.map(s => s.date);
-
-  const pendingPractices = safePractices.filter(p => {
+  const pendingPractices = practices.filter(p => {
       if(!p || !p.date) return false;
       const pDate = p.date.split('T')[0];
       return !existingDates.includes(pDate);
@@ -557,10 +553,7 @@ const SessionLogManager = ({ sessions, practices, members, settings, db, role, u
   );
 };
 
-// --- Session Detail, TrackList, PracticeFeeCalculator, MiscFeeCalculator, AlcoholManager, AlcoholFeeCalculator, TechView, AdminDashboard 等元件保持不變 (已在前面修正過) ---
-// (為節省篇幅，這部分代碼與 v10.0 相同，請確保複製完整代碼)
-// 這裡僅列出 SessionDetail 之後的代碼，請確保合併
-
+// --- Session Detail ---
 const SessionDetail = ({ session, members, settings, onBack, db, role, user }) => {
   const [tab, setTab] = useState('tracks'); 
   const [funNotes, setFunNotes] = useState(session.funNotes || "");
@@ -716,7 +709,7 @@ const MiscFeeCalculator = ({ session, members, db }) => {
   );
 };
 
-// --- Alcohol Manager & TechView & AdminDashboard (保持不變) ---
+// --- Alcohol Manager ---
 const AlcoholManager = ({ alcohols, members, settings, db, role, user }) => {
   const [tab, setTab] = useState('list'); 
   const [newAlcohol, setNewAlcohol] = useState({ name: '', type: '威士忌', level: 100, rating: 5, note: '', comments: [] });
@@ -754,6 +747,7 @@ const AlcoholManager = ({ alcohols, members, settings, db, role, user }) => {
   );
 };
 
+// --- 5. Tech View ---
 const TechView = ({ songs, db, role, user }) => {
   const [viewMode, setViewMode] = useState('list'); 
   const [filter, setFilter] = useState('all'); 
