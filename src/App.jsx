@@ -12,8 +12,8 @@ import {
   PartyPopper, Headphones, Speaker, Star, Image as ImageIcon, Disc,
   Ghost, Pencil, Trash2, Lock, Save, MinusCircle, FilePlus, AlertTriangle,
   Database, Download, Filter, Search, Clock, ListPlus, Edit, CheckSquare,
-  // ⚠️ 移除動物圖示，改用通用圖示以避免版本相容性崩潰
-  User, Heart, Sun, Moon, Cloud 
+  // 移除動物圖示，只保留基礎圖示
+  User 
 } from 'lucide-react';
 
 // ==========================================
@@ -60,20 +60,17 @@ const ROLE_ALCOHOL_NAME = "李家賢";
 // --- 🎸 樂團專屬設定 ---
 const BAND_NAME = "不開玩笑";
 
-// --- 🎨 莫蘭迪色調與頭像設定 ---
+// --- 🎨 莫蘭迪色調 ---
 const MORANDI_COLORS = ['#8C736F', '#AAB8AB', '#B7B7BD', '#CCD2CC', '#9F8D8B', '#8FA39A'];
-// 使用基礎圖示，確保所有環境都能載入
-const MEMBER_ICONS = [User, Smile, Star, Heart, Sun, Moon, Cloud, Music2];
 
-const getMemberStyle = (name) => {
-  if (!name) return { color: MORANDI_COLORS[0], Icon: User };
+// 工具: 生成名字對應顏色 (修復白頁關鍵)
+const stringToColor = (str) => {
+  if (!str) return MORANDI_COLORS[0];
   let hash = 0;
-  for (let i = 0; i < name.length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
   }
-  const colorIndex = Math.abs(hash) % MORANDI_COLORS.length;
-  const iconIndex = Math.abs(hash) % MEMBER_ICONS.length;
-  return { color: MORANDI_COLORS[colorIndex], Icon: MEMBER_ICONS[iconIndex] };
+  return MORANDI_COLORS[Math.abs(hash) % MORANDI_COLORS.length];
 };
 
 const BandLogo = () => (
@@ -158,7 +155,7 @@ const getZodiac = (dateStr) => {
   return (z[idx]?.n || "") + "座";
 };
 
-// --- Firebase Config ---
+// --- Firebase ---
 const USER_CONFIG = {
   apiKey: "AIzaSyDb36ftpgHzZEH2IuYOsPmJEiKgeVhLWKk",
   authDomain: "bandmanager-a3049.firebaseapp.com",
@@ -195,7 +192,7 @@ const DEFAULT_GENERAL_DATA = {
   practices: [] 
 };
 
-// --- Main App ---
+// --- Main App Content ---
 const MainApp = () => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -209,6 +206,8 @@ const MainApp = () => {
   const [alcohols, setAlcohols] = useState([]);
   const [songs, setSongs] = useState([]);
   const [generalData, setGeneralData] = useState(null);
+  
+  const appId = USER_CONFIG.appId; 
 
   // Auth
   useEffect(() => {
@@ -229,7 +228,7 @@ const MainApp = () => {
       const userEmail = user.email;
       const isAdmin = ADMIN_EMAILS.includes(userEmail);
       
-      // 白名單檢查
+      // 動態白名單檢查：只有在成員名單載入後且不為空時才檢查
       if (!IS_CANVAS && !isAdmin && members.length > 0) {
          const isMember = members.some(m => m.email === userEmail);
          if (!isMember) {
@@ -257,10 +256,11 @@ const MainApp = () => {
 
   // Firestore 資料監聽
   useEffect(() => {
+    // 強制結束 Loading 的保險機制
     const forceLoad = setTimeout(() => {
         setLoading(false);
         if (!generalData) setGeneralData(DEFAULT_GENERAL_DATA);
-    }, 2500); // 延長到 2.5秒
+    }, 2500);
 
     if (!db || !user) return;
     const unsubMembers = onSnapshot(getCollectionRef(db, 'members'), (snap) => setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() }))), (e) => console.warn(e));
@@ -296,6 +296,7 @@ const MainApp = () => {
   const handleLogout = async () => { await signOut(auth); setUser(null); };
 
   const renderContent = () => {
+    // 雙重保險：確保 generalData 不為 null
     const data = generalData || DEFAULT_GENERAL_DATA;
 
     switch (activeTab) {
@@ -309,7 +310,8 @@ const MainApp = () => {
   };
 
   if (loading && !generalData) return <div className="h-screen flex justify-center items-center bg-[#FDFBF7]"><Loader2 className="animate-spin text-[#77ABC0]"/></div>;
-  const showImage = !imgError && BAND_LOGO_BASE64;
+  const logoSrc = BAND_LOGO_BASE64 || BAND_LOGO_URL;
+  const showImage = logoSrc && !imgError;
   const handlePrankClick = (e) => { const btn = e.currentTarget; btn.style.transform = 'rotate(360deg) scale(1.2)'; setTimeout(() => { setShowPrankModal(true); btn.style.transform = 'rotate(0deg) scale(1)'; }, 300); };
 
   if (!user) return (
@@ -327,7 +329,7 @@ const MainApp = () => {
     <div className="min-h-screen bg-[#FDFBF7] text-[#725E77] font-sans pb-24">
       <header className="bg-white/80 backdrop-blur sticky top-0 z-40 border-b border-[#CBABCA]/20 px-4 py-3 flex justify-between items-center shadow-sm">
         <div className="flex items-center gap-3">
-          {showImage ? <img src={logoSrc} alt="Logo" className="w-9 h-9 rounded-xl object-contain bg-white shadow-sm" onError={() => setImgError(true)} /> : <BandLogo />}
+          {showImage ? <img src={BAND_LOGO_BASE64} alt="Logo" className="w-9 h-9 rounded-xl object-contain bg-white shadow-sm" onError={() => setImgError(true)} /> : <BandLogo />}
           <span className="font-bold text-lg tracking-wide text-[#77ABC0]">{BAND_NAME}</span>
         </div>
         <div className="flex items-center gap-2">
@@ -341,7 +343,9 @@ const MainApp = () => {
           <button onClick={handleLogout} className="p-1.5 bg-[#FDFBF7] rounded-full text-[#BC8F8F] hover:bg-[#F2D7DD] transition"><LogOut size={16} /></button>
         </div>
       </header>
+
       <main className="max-w-md mx-auto p-4">{renderContent()}</main>
+
       <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-[#CBABCA]/20 px-2 py-2 z-50 flex justify-around items-center pb-safe shadow-[0_-4px_20px_-10px_rgba(203,171,202,0.15)]">
         <NavBtn id="dashboard" icon={Users} label="團員" active={activeTab} set={setActiveTab} />
         <NavBtn id="logs" icon={ClipboardList} label="日誌" active={activeTab} set={setActiveTab} />
@@ -349,6 +353,7 @@ const MainApp = () => {
         <NavBtn id="alcohol" icon={Beer} label="酒櫃" active={activeTab} set={setActiveTab} />
         <NavBtn id="tech" icon={Zap} label="資源" active={activeTab} set={setActiveTab} />
       </nav>
+
       {showPrankModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
           <div className="bg-white w-full max-w-xs p-6 rounded-[32px] text-center shadow-2xl animate-in zoom-in-95 duration-200 relative overflow-hidden">
@@ -385,7 +390,6 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
     .sort((a,b) => a.dateObj - b.dateObj);
   
   const nextPractice = sortedPractices.find(p => p.dateObj >= now) || sortedPractices[sortedPractices.length - 1] || { date: new Date().toISOString(), title: '尚未安排', location: '圓頭音樂' };
-  
   const nextDateObj = new Date(nextPractice.date);
   const isValidDate = !isNaN(nextDateObj.getTime());
   const diffDays = isValidDate ? Math.ceil((nextDateObj - now) / (1000 * 60 * 60 * 24)) : 0; 
@@ -453,7 +457,9 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
           </div>
           <div className="text-lg text-[#E0E7EA] font-bold mb-4 flex items-center gap-2">
             <Clock size={18}/> 
-            {isValidDate ? `${new Date(nextPractice.date).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute:'2-digit' })}` : "時間未定"}
+            {isValidDate 
+              ? `${nextDateObj.toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute:'2-digit' })} ${nextPractice.endTime ? `- ${new Date(nextPractice.endTime).toLocaleTimeString('zh-TW', { hour: '2-digit', minute:'2-digit' })}` : ''}`
+              : "時間未定"}
           </div>
           <div className="flex items-center gap-2 bg-black/20 w-fit px-4 py-2 rounded-full backdrop-blur-sm border border-white/10"><MapPin size={16} className="text-[#E0E7EA]"/><span className="text-sm font-bold">{nextPractice.location}</span></div>
         </div>
@@ -476,7 +482,10 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
             <div key={m.id} onClick={() => setExpandedMember(expandedMember === m.id ? null : m.id)} className={`bg-white p-4 rounded-2xl border shadow-sm transition-all cursor-pointer ${expandedMember === m.id ? 'border-[#CBABCA] ring-1 ring-[#CBABCA]/30' : 'border-[#E0E0D9]'}`}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white font-bold text-lg border-2 border-white shadow-sm overflow-hidden" style={{backgroundColor: style.color}}><Icon size={24} /></div>
+                  <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white font-bold text-lg border-2 border-white shadow-sm overflow-hidden" style={{backgroundColor: style.color}}>
+                    {/* 修正頭像顯示 */}
+                    {m.avatarUrl ? <img src={m.avatarUrl} alt="U" className="w-full h-full object-cover"/> : (m.nickname?.[0] || 'M')}
+                  </div>
                   <div>
                     <div className="flex items-center gap-2"><span className="font-bold text-[#725E77] text-lg">{m.nickname}</span>{m.birthday && new Date().getMonth()+1 === parseInt(m.birthday.split('-')[1]) && <span className="bg-[#BC8F8F] text-white text-[10px] px-2 py-0.5 rounded-full font-bold flex items-center gap-1"><Cake size={10} /> 壽星</span>}</div>
                     <div className="flex items-center gap-1 text-xs text-[#C5B8BF] font-medium"><span className="text-[#77ABC0] font-bold">{m.instrument}</span><span>•</span><span>{m.realName}</span></div>
@@ -517,7 +526,8 @@ const MemberEditModal = ({ member, onClose, onSave }) => {
            <input className="bg-[#FDFBF7] p-3 rounded-xl text-sm" placeholder="本名" value={form.realName || ''} onChange={e => setForm({...form, realName: e.target.value})} />
         </div>
         <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm border border-[#77ABC0]/30" placeholder="Google Email (權限綁定用)" value={form.email || ''} onChange={e => setForm({...form, email: e.target.value})} />
-        {/* 移除頭像網址，改用自動配色 */}
+        {/* 新增頭像網址欄位 */}
+        <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm" placeholder="頭像網址 (FB/IG圖片連結，選填)" value={form.avatarUrl || ''} onChange={e => setForm({...form, avatarUrl: e.target.value})} />
         <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm" placeholder="樂器 (Vocal, Bass...)" value={form.instrument || ''} onChange={e => setForm({...form, instrument: e.target.value})} />
         <input type="date" className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm" value={form.birthday || ''} onChange={e => setForm({...form, birthday: e.target.value})} />
         <textarea className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm h-20" placeholder="備註..." value={form.note || ''} onChange={e => setForm({...form, note: e.target.value})} />
