@@ -11,14 +11,43 @@ import {
   Wallet, Receipt, Coffee, Gift, Zap, LayoutGrid, List,
   PartyPopper, Headphones, Speaker, Star, Image as ImageIcon, Disc,
   Ghost, Pencil, Trash2, Lock, Save, MinusCircle, FilePlus, AlertTriangle,
-  Database, Download, Filter, Search, Clock, ListPlus, Edit, CheckSquare
+  Database, Download, Filter, Search, Clock, ListPlus, Edit, CheckSquare,
+  // ⚠️ 移除動物圖示，改用通用圖示以避免版本相容性崩潰
+  User, Heart, Sun, Moon, Cloud 
 } from 'lucide-react';
+
+// ==========================================
+// 🛡️ 錯誤邊界元件 (防止白頁)
+// ==========================================
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+  static getDerivedStateFromError(error) { return { hasError: true, error }; }
+  componentDidCatch(error, errorInfo) { console.error("Uncaught error:", error, errorInfo); }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-slate-50 text-slate-800">
+          <AlertTriangle size={48} className="text-red-500 mb-4"/>
+          <h2 className="text-xl font-bold mb-2">程式發生錯誤 (App Crashed)</h2>
+          <p className="text-sm text-slate-600 mb-4">請截圖此畫面傳給開發者：</p>
+          <pre className="bg-slate-200 p-4 rounded-lg text-xs overflow-auto max-w-full mb-6 border border-slate-300">
+            {this.state.error?.toString()}
+          </pre>
+          <button onClick={() => window.location.reload()} className="px-6 py-3 bg-[#77ABC0] text-white rounded-xl font-bold shadow-lg">
+            重新整理頁面
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // ==========================================
 // 🔐 權限管理區
 // ==========================================
 
-// 1. 超級管理員 (最後的救援鑰匙)
+// 1. 超級管理員
 const ADMIN_EMAILS = [
   "jamie.chou0917@gmail.com",
   "demo@test.com"
@@ -31,17 +60,20 @@ const ROLE_ALCOHOL_NAME = "李家賢";
 // --- 🎸 樂團專屬設定 ---
 const BAND_NAME = "不開玩笑";
 
-// --- 🎨 莫蘭迪色調 ---
+// --- 🎨 莫蘭迪色調與頭像設定 ---
 const MORANDI_COLORS = ['#8C736F', '#AAB8AB', '#B7B7BD', '#CCD2CC', '#9F8D8B', '#8FA39A'];
+// 使用基礎圖示，確保所有環境都能載入
+const MEMBER_ICONS = [User, Smile, Star, Heart, Sun, Moon, Cloud, Music2];
 
-// 工具: 生成名字對應顏色
-const stringToColor = (str) => {
-  if (!str) return MORANDI_COLORS[0];
+const getMemberStyle = (name) => {
+  if (!name) return { color: MORANDI_COLORS[0], Icon: User };
   let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
   }
-  return MORANDI_COLORS[Math.abs(hash) % MORANDI_COLORS.length];
+  const colorIndex = Math.abs(hash) % MORANDI_COLORS.length;
+  const iconIndex = Math.abs(hash) % MEMBER_ICONS.length;
+  return { color: MORANDI_COLORS[colorIndex], Icon: MEMBER_ICONS[iconIndex] };
 };
 
 const BandLogo = () => (
@@ -53,19 +85,19 @@ const BandLogo = () => (
 
 // --- 工具: 安全複製 ---
 const secureCopy = (text) => {
-  const textArea = document.createElement("textarea");
-  textArea.value = text;
-  textArea.style.position = "fixed";
-  textArea.style.left = "-9999px";
-  document.body.appendChild(textArea);
-  textArea.focus();
-  textArea.select();
   try {
-    document.execCommand('copy');
-    document.body.removeChild(textArea);
-    return true;
+     const textArea = document.createElement("textarea");
+     textArea.value = text;
+     textArea.style.position = "fixed";
+     textArea.style.left = "-9999px";
+     document.body.appendChild(textArea);
+     textArea.focus();
+     textArea.select();
+     document.execCommand('copy');
+     document.body.removeChild(textArea);
+     return true;
   } catch (err) {
-    return false;
+     return false;
   }
 };
 
@@ -110,10 +142,10 @@ const formatBirthdayDisplay = (dateStr) => {
 
 const getZodiac = (dateStr) => {
   if (!dateStr) return "";
-  const date = new Date(dateStr);
-  if (isNaN(date.getTime())) return "";
-  const m = date.getMonth() + 1;
-  const d = date.getDate();
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return "";
+  const m = d.getMonth() + 1;
+  const day = d.getDate();
   const z = [{n:"摩羯",d:[12,22]}, {n:"水瓶",d:[1,21]}, {n:"雙魚",d:[2,19]}, {n:"牡羊",d:[3,21]}, {n:"金牛",d:[4,21]}, {n:"雙子",d:[5,21]}, {n:"巨蟹",d:[6,22]}, {n:"獅子",d:[7,23]}, {n:"處女",d:[8,24]}, {n:"天秤",d:[9,24]}, {n:"天蠍",d:[10,24]}, {n:"射手",d:[11,23]}, {n:"摩羯",d:[12,22]}];
   const idx = z.findIndex((x, i) => {
     const next = z[i+1];
@@ -126,7 +158,7 @@ const getZodiac = (dateStr) => {
   return (z[idx]?.n || "") + "座";
 };
 
-// --- Firebase ---
+// --- Firebase Config ---
 const USER_CONFIG = {
   apiKey: "AIzaSyDb36ftpgHzZEH2IuYOsPmJEiKgeVhLWKk",
   authDomain: "bandmanager-a3049.firebaseapp.com",
@@ -163,7 +195,8 @@ const DEFAULT_GENERAL_DATA = {
   practices: [] 
 };
 
-const App = () => {
+// --- Main App ---
+const MainApp = () => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -176,10 +209,8 @@ const App = () => {
   const [alcohols, setAlcohols] = useState([]);
   const [songs, setSongs] = useState([]);
   const [generalData, setGeneralData] = useState(null);
-  
-  const appId = USER_CONFIG.appId; 
 
-  // Auth 監聽 (移除寫死白名單)
+  // Auth
   useEffect(() => {
     if (auth) {
       getRedirectResult(auth).catch(e => console.log(e));
@@ -192,13 +223,13 @@ const App = () => {
     } else { setLoading(false); }
   }, []);
 
-  // 權限與白名單檢查 (完全依賴資料庫)
+  // 權限與白名單檢查 (動態連動版)
   useEffect(() => {
     if (user) {
       const userEmail = user.email;
       const isAdmin = ADMIN_EMAILS.includes(userEmail);
       
-      // 動態白名單檢查
+      // 白名單檢查
       if (!IS_CANVAS && !isAdmin && members.length > 0) {
          const isMember = members.some(m => m.email === userEmail);
          if (!isMember) {
@@ -208,6 +239,7 @@ const App = () => {
          }
       }
 
+      // 職位權限分配
       const financeMember = members.find(m => m.realName === ROLE_FINANCE_NAME || m.nickname === ROLE_FINANCE_NAME);
       const isFinance = isAdmin || (financeMember && financeMember.email === userEmail);
       
@@ -218,22 +250,20 @@ const App = () => {
       setLoading(false);
     } else {
       setRole({ admin: false, finance: false, alcohol: false });
-      setLoading(false);
+      // 確保沒有使用者時也要結束 loading (預覽環境除外)
+      if (!IS_CANVAS) setLoading(false);
     }
   }, [user, members]);
 
   // Firestore 資料監聽
   useEffect(() => {
-    // 預設資料防呆
     const forceLoad = setTimeout(() => {
-        if (!generalData) {
-            setGeneralData(DEFAULT_GENERAL_DATA);
-            setLoading(false);
-        }
-    }, 2000);
+        setLoading(false);
+        if (!generalData) setGeneralData(DEFAULT_GENERAL_DATA);
+    }, 2500); // 延長到 2.5秒
 
     if (!db || !user) return;
-    const unsubMembers = onSnapshot(getCollectionRef(db, 'members'), (snap) => setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() }))), (e) => {if(e.code==='permission-denied') console.warn("Perms error");});
+    const unsubMembers = onSnapshot(getCollectionRef(db, 'members'), (snap) => setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() }))), (e) => console.warn(e));
     const unsubLogs = onSnapshot(getCollectionRef(db, 'logs'), (snap) => setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => new Date(b.date) - new Date(a.date))));
     const unsubAlcohol = onSnapshot(getCollectionRef(db, 'alcohol'), (snap) => setAlcohols(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubSongs = onSnapshot(getCollectionRef(db, 'songs'), (snap) => setSongs(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
@@ -241,9 +271,7 @@ const App = () => {
       if (docSnap.exists()) {
         const data = docSnap.data();
         if (data.nextPractice && !data.practices) data.practices = [data.nextPractice];
-        if (!data.settings?.alcoholTypes) {
-           data.settings = { ...DEFAULT_GENERAL_DATA.settings, ...(data.settings || {}) };
-        }
+        if (!data.settings?.alcoholTypes) data.settings = { ...DEFAULT_GENERAL_DATA.settings, ...(data.settings || {}) };
         setGeneralData(data);
       } else {
         setDoc(getDocRef(db, 'general', 'info'), DEFAULT_GENERAL_DATA);
@@ -280,9 +308,8 @@ const App = () => {
     }
   };
 
-  if (loading) return <div className="h-screen flex justify-center items-center bg-[#FDFBF7]"><Loader2 className="animate-spin text-[#77ABC0]"/></div>;
-  const logoSrc = BAND_LOGO_BASE64 || BAND_LOGO_URL;
-  const showImage = logoSrc && !imgError;
+  if (loading && !generalData) return <div className="h-screen flex justify-center items-center bg-[#FDFBF7]"><Loader2 className="animate-spin text-[#77ABC0]"/></div>;
+  const showImage = !imgError && BAND_LOGO_BASE64;
   const handlePrankClick = (e) => { const btn = e.currentTarget; btn.style.transform = 'rotate(360deg) scale(1.2)'; setTimeout(() => { setShowPrankModal(true); btn.style.transform = 'rotate(0deg) scale(1)'; }, 300); };
 
   if (!user) return (
@@ -304,18 +331,17 @@ const App = () => {
           <span className="font-bold text-lg tracking-wide text-[#77ABC0]">{BAND_NAME}</span>
         </div>
         <div className="flex items-center gap-2">
+          {role.admin && <span className="bg-rose-100 text-rose-600 text-[10px] px-2 py-0.5 rounded-full font-bold">Admin</span>}
           {role.admin && (
              <button onClick={() => setActiveTab('admin')} className={`p-1.5 rounded-full transition ${activeTab === 'admin' ? 'bg-[#77ABC0] text-white' : 'text-[#CBABCA] hover:bg-[#F2D7DD]'}`}><Settings size={18}/></button>
           )}
           <div className="w-8 h-8 rounded-full border-2 border-white shadow-sm overflow-hidden bg-slate-200" style={{backgroundColor: stringToColor(user.displayName)}}>
-             {user.photoURL ? <img src={user.photoURL} alt="U" /> : <div className="w-full h-full flex items-center justify-center text-xs font-bold text-white">{user.displayName?.[0]}</div>}
+             {user.photoURL ? <img src={user.photoURL} alt="U" /> : <div className="w-full h-full flex items-center justify-center text-xs font-bold text-white"><User size={16}/></div>}
           </div>
           <button onClick={handleLogout} className="p-1.5 bg-[#FDFBF7] rounded-full text-[#BC8F8F] hover:bg-[#F2D7DD] transition"><LogOut size={16} /></button>
         </div>
       </header>
-
       <main className="max-w-md mx-auto p-4">{renderContent()}</main>
-
       <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-[#CBABCA]/20 px-2 py-2 z-50 flex justify-around items-center pb-safe shadow-[0_-4px_20px_-10px_rgba(203,171,202,0.15)]">
         <NavBtn id="dashboard" icon={Users} label="團員" active={activeTab} set={setActiveTab} />
         <NavBtn id="logs" icon={ClipboardList} label="日誌" active={activeTab} set={setActiveTab} />
@@ -323,7 +349,6 @@ const App = () => {
         <NavBtn id="alcohol" icon={Beer} label="酒櫃" active={activeTab} set={setActiveTab} />
         <NavBtn id="tech" icon={Zap} label="資源" active={activeTab} set={setActiveTab} />
       </nav>
-
       {showPrankModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
           <div className="bg-white w-full max-w-xs p-6 rounded-[32px] text-center shadow-2xl animate-in zoom-in-95 duration-200 relative overflow-hidden">
@@ -353,6 +378,7 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
   
   const now = new Date();
   
+  // 安全的日期排序 (防呆修正)
   const sortedPractices = [...practices]
     .filter(p => p && p.date) 
     .map(p => ({...p, dateObj: new Date(p.date), endObj: p.endTime ? new Date(p.endTime) : new Date(new Date(p.date).getTime() + 2*60*60*1000) }))
@@ -371,32 +397,14 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
     if (!member) return;
     const canEdit = role.admin || (user.email && member.email === user.email);
     if (!canEdit) { alert("只能修改自己的出席狀態喔！"); return; }
-    const currentAttendance = member.attendance || [];
-    let newAttendance;
-    if (currentAttendance.includes(dateStr)) {
-      newAttendance = currentAttendance.filter(d => d !== dateStr);
-    } else {
-      newAttendance = [...currentAttendance, dateStr];
-    }
-    await updateDoc(getDocRef(db, 'members', memberId), { attendance: newAttendance });
+    const current = member.attendance || [];
+    const newAtt = current.includes(dateStr) ? current.filter(d => d !== dateStr) : [...current, dateStr];
+    await updateDoc(getDocRef(db, 'members', memberId), { attendance: newAtt });
   };
-
-  const handleSaveMember = async (memberData) => {
-    if (!db) return;
-    if (memberData.id) {
-      await updateDoc(getDocRef(db, 'members', memberData.id), memberData);
-    } else {
-      await addDoc(getCollectionRef(db, 'members'), memberData);
-    }
-    setEditingMember(null);
-  };
-
-  const handleDeleteMember = async (id) => {
-    if (confirm("確定要刪除這位團員嗎？")) {
-       await deleteDoc(getDocRef(db, 'members', id));
-    }
-  };
-
+  
+  const handleSaveMember = async (data) => { if (!db) return; data.id ? await updateDoc(getDocRef(db, 'members', data.id), data) : await addDoc(getCollectionRef(db, 'members'), data); setEditingMember(null); };
+  const handleDeleteMember = async (id) => { if (confirm("確定刪除？")) await deleteDoc(getDocRef(db, 'members', id)); };
+  
   const addToCalendarUrl = () => {
     if (!isValidDate) return "#";
     const start = nextDateObj.toISOString().replace(/-|:|\.\d\d\d/g, "");
@@ -413,19 +421,11 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
           <div key={idx} className="bg-[#FDFBF7] p-3 rounded-xl border border-[#E0E0D9] space-y-2 relative">
              <button onClick={() => setPractices(practices.filter((_, i) => i !== idx))} className="absolute top-2 right-2 text-[#BC8F8F]"><MinusCircle size={16}/></button>
              <div className="text-xs text-[#C5B8BF] font-bold">開始</div>
-             <input type="datetime-local" className="w-full bg-white p-2 rounded-lg text-sm" value={p.date} onChange={e => {
-               const newP = [...practices]; newP[idx].date = e.target.value; setPractices(newP);
-             }} />
+             <input type="datetime-local" className="w-full bg-white p-2 rounded-lg text-sm" value={p.date} onChange={e => { const newP = [...practices]; newP[idx].date = e.target.value; setPractices(newP); }} />
              <div className="text-xs text-[#C5B8BF] font-bold">結束</div>
-             <input type="datetime-local" className="w-full bg-white p-2 rounded-lg text-sm" value={p.endTime || ''} onChange={e => {
-               const newP = [...practices]; newP[idx].endTime = e.target.value; setPractices(newP);
-             }} />
-             <input type="text" className="w-full bg-white p-2 rounded-lg text-sm" placeholder="標題" value={p.title} onChange={e => {
-               const newP = [...practices]; newP[idx].title = e.target.value; setPractices(newP);
-             }} />
-             <input type="text" className="w-full bg-white p-2 rounded-lg text-sm" placeholder="地點" value={p.location} onChange={e => {
-               const newP = [...practices]; newP[idx].location = e.target.value; setPractices(newP);
-             }} />
+             <input type="datetime-local" className="w-full bg-white p-2 rounded-lg text-sm" value={p.endTime || ''} onChange={e => { const newP = [...practices]; newP[idx].endTime = e.target.value; setPractices(newP); }} />
+             <input type="text" className="w-full bg-white p-2 rounded-lg text-sm" placeholder="標題" value={p.title} onChange={e => { const newP = [...practices]; newP[idx].title = e.target.value; setPractices(newP); }} />
+             <input type="text" className="w-full bg-white p-2 rounded-lg text-sm" placeholder="地點" value={p.location} onChange={e => { const newP = [...practices]; newP[idx].location = e.target.value; setPractices(newP); }} />
           </div>
         ))}
         <button onClick={() => setPractices([...practices, { date: new Date().toISOString(), endTime: '', title: '新練團', location: '圓頭音樂' }])} className="w-full py-2 border-2 border-dashed border-[#77ABC0] text-[#77ABC0] rounded-xl font-bold flex justify-center items-center gap-1"><Plus size={16}/> 增加場次</button>
@@ -453,9 +453,7 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
           </div>
           <div className="text-lg text-[#E0E7EA] font-bold mb-4 flex items-center gap-2">
             <Clock size={18}/> 
-            {isValidDate 
-              ? `${nextDateObj.toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute:'2-digit' })} ${nextPractice.endTime ? `- ${new Date(nextPractice.endTime).toLocaleTimeString('zh-TW', { hour: '2-digit', minute:'2-digit' })}` : ''}`
-              : "時間未定"}
+            {isValidDate ? `${new Date(nextPractice.date).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute:'2-digit' })}` : "時間未定"}
           </div>
           <div className="flex items-center gap-2 bg-black/20 w-fit px-4 py-2 rounded-full backdrop-blur-sm border border-white/10"><MapPin size={16} className="text-[#E0E7EA]"/><span className="text-sm font-bold">{nextPractice.location}</span></div>
         </div>
@@ -471,20 +469,19 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
       <div>
         <div className="flex items-center justify-between px-1 mb-2"><h3 className="font-bold text-xl text-[#725E77]">本月練團點名</h3>{role.admin && <button onClick={() => setEditingMember({})} className="text-xs font-bold text-[#77ABC0] bg-[#F0F4F5] px-3 py-1.5 rounded-lg flex items-center gap-1"><Plus size={14}/> 新增團員</button>}</div>
         <div className="grid grid-cols-1 gap-3">
-          {members.map(m => (
+          {members.map(m => {
+            const style = getMemberStyle(m.nickname || m.realName);
+            const Icon = style.Icon;
+            return (
             <div key={m.id} onClick={() => setExpandedMember(expandedMember === m.id ? null : m.id)} className={`bg-white p-4 rounded-2xl border shadow-sm transition-all cursor-pointer ${expandedMember === m.id ? 'border-[#CBABCA] ring-1 ring-[#CBABCA]/30' : 'border-[#E0E0D9]'}`}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  {/* 頭像改回文字縮寫 */}
-                  <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white font-bold text-lg border-2 border-white shadow-sm overflow-hidden" style={{backgroundColor: stringToColor(m.nickname || m.realName)}}>
-                     {m.nickname?.[0] || 'M'}
-                  </div>
+                  <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white font-bold text-lg border-2 border-white shadow-sm overflow-hidden" style={{backgroundColor: style.color}}><Icon size={24} /></div>
                   <div>
                     <div className="flex items-center gap-2"><span className="font-bold text-[#725E77] text-lg">{m.nickname}</span>{m.birthday && new Date().getMonth()+1 === parseInt(m.birthday.split('-')[1]) && <span className="bg-[#BC8F8F] text-white text-[10px] px-2 py-0.5 rounded-full font-bold flex items-center gap-1"><Cake size={10} /> 壽星</span>}</div>
                     <div className="flex items-center gap-1 text-xs text-[#C5B8BF] font-medium"><span className="text-[#77ABC0] font-bold">{m.instrument}</span><span>•</span><span>{m.realName}</span></div>
                   </div>
                 </div>
-                {/* 互動式日期出席按鈕 */}
                 <div className="flex gap-1.5 overflow-x-auto max-w-[120px] scrollbar-hide">
                   {practices.map(p => {
                     const dateStr = p.date ? p.date.split('T')[0] : ''; // 防呆
@@ -520,6 +517,7 @@ const MemberEditModal = ({ member, onClose, onSave }) => {
            <input className="bg-[#FDFBF7] p-3 rounded-xl text-sm" placeholder="本名" value={form.realName || ''} onChange={e => setForm({...form, realName: e.target.value})} />
         </div>
         <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm border border-[#77ABC0]/30" placeholder="Google Email (權限綁定用)" value={form.email || ''} onChange={e => setForm({...form, email: e.target.value})} />
+        {/* 移除頭像網址，改用自動配色 */}
         <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm" placeholder="樂器 (Vocal, Bass...)" value={form.instrument || ''} onChange={e => setForm({...form, instrument: e.target.value})} />
         <input type="date" className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm" value={form.birthday || ''} onChange={e => setForm({...form, birthday: e.target.value})} />
         <textarea className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm h-20" placeholder="備註..." value={form.note || ''} onChange={e => setForm({...form, note: e.target.value})} />
