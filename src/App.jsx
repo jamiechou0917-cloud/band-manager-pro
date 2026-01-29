@@ -44,7 +44,7 @@ class ErrorBoundary extends React.Component {
 // 1. 超級管理員 (請確保 Email 全小寫)
 const ADMIN_EMAILS = [
   "jamie.chou0917@gmail.com",
-  "demo@test.com"
+  "Jamie.chou0917@gmail.com"
 ];
 
 // 2. 特殊職位
