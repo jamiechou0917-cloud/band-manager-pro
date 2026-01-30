@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
-// v3.0 核心修正：保留 Popup 登入與儲存降級策略 (解決手機登入)，並修復酒櫃計算機崩潰問題
+// v4.0 核心修正：全面使用 Popup 模式解決 Safari ITP 問題，並包含所有防呆機制
 import { 
   getAuth, 
   signInWithPopup, 
@@ -25,7 +25,7 @@ import {
   Ghost, Pencil, Trash2, Lock, Save, MinusCircle, FilePlus, AlertTriangle,
   Database, Download, Filter, Search, Clock, CheckSquare,
   User, StickyNote, ArrowRight, Calculator, Link as LinkIcon, Youtube,
-  BookOpen, FileJson, UploadCloud, Library, Share, ArrowUp, ArrowDown, ExternalLink as LinkExternal
+  BookOpen, FileJson, UploadCloud, Library, Share, ArrowUp, ArrowDown, Wrench, RefreshCw
 } from 'lucide-react';
 
 // ==========================================
@@ -219,7 +219,7 @@ const App = () => {
     }
   }, []);
 
-  // Auth 監聽
+  // Auth 監聽 - 強力修復版：儲存策略降級機制
   useEffect(() => {
     if (auth) {
       const initAuth = async () => {
@@ -322,20 +322,31 @@ const App = () => {
     return () => { unsubMembers(); unsubLogs(); unsubAlcohol(); unsubSongs(); unsubRepertoire(); unsubGeneral(); };
   }, [user]);
 
+  // 修正：全面改用 Popup 登入，避免 missing initial state 問題
   const handleLogin = async () => {
     try { 
       await signInWithPopup(auth, googleProvider); 
     } catch (err) { 
       console.error("Popup failed", err);
-      if (err.code === 'auth/popup-blocked' || err.code === 'auth/popup-closed-by-user') {
+      if (err.message.includes("missing initial state")) {
+          alert("Safari 登入錯誤：請關閉「防止跨網站追蹤」\n\n設定 > Safari > 隱私權與安全性 > 關閉「防止跨網站追蹤」");
+      } else if (err.code === 'auth/popup-blocked' || err.code === 'auth/popup-closed-by-user') {
           alert("登入彈窗被阻擋。\n\n請點擊「允許彈出式視窗」，或改用 Chrome / Safari 開啟本頁面。");
       } else {
-          alert("登入錯誤：" + err.message + "\n建議：\n1. 關閉無痕模式\n2. 檢查網路\n3. 如果在 Line/FB 內，請按右下角改用 Safari 開啟");
+          alert("登入錯誤：" + err.message + "\n\n建議：\n1. 點擊下方的「重置登入」按鈕\n2. 關閉無痕模式\n3. 檢查網路\n4. 若在 Line/FB 內，請按右下角改用 Safari 開啟");
       }
     }
   };
   
   const handleLogout = async () => { await signOut(auth); setUser(null); };
+
+  const handleResetLogin = () => {
+      if(confirm("這將清除瀏覽器的暫存資料並重新整理頁面，確定嗎？")) {
+          sessionStorage.clear();
+          localStorage.clear();
+          window.location.reload();
+      }
+  };
 
   const renderContent = () => {
     const data = generalData || DEFAULT_GENERAL_DATA;
@@ -407,7 +418,11 @@ const App = () => {
         <div className="bg-white p-8 rounded-[32px] shadow-xl w-full max-w-sm">
            <div className="flex justify-center mb-6"><BandLogo /></div>
            <h1 className="text-2xl font-black text-[#725E77] mb-2">{BAND_NAME}</h1>
-           <button onClick={handleLogin} className="w-full bg-[#77ABC0] text-white py-4 rounded-2xl font-bold flex items-center justify-center gap-2 shadow-lg active:scale-95 transition"><ShieldCheck size={20}/> Google 登入</button>
+           <div className="space-y-3 w-full">
+               <button onClick={handleLogin} className="w-full bg-[#77ABC0] text-white py-4 rounded-2xl font-bold flex items-center justify-center gap-2 shadow-lg active:scale-95 transition"><ShieldCheck size={20}/> Google 登入</button>
+               {/* 新增：修復登入問題按鈕 */}
+               <button onClick={handleResetLogin} className="w-full bg-slate-100 text-slate-500 py-3 rounded-2xl font-bold flex items-center justify-center gap-2 text-xs hover:bg-slate-200 transition"><RefreshCw size={14}/> 重置登入狀態 (解決錯誤)</button>
+           </div>
            <div className="mt-6 p-3 bg-indigo-50 rounded-xl text-xs text-indigo-800 text-left border border-indigo-100">本系統僅限受邀團員登入。請使用 Safari 或 Chrome 開啟。</div>
         </div>
       </div>
@@ -420,7 +435,7 @@ const App = () => {
           <div className="flex items-center gap-3">
             {showImage ? <img src={BAND_LOGO_BASE64} alt="Logo" className="w-9 h-9 rounded-xl object-contain bg-white shadow-sm" onError={() => setImgError(true)} /> : <BandLogo />}
             <span className="font-bold text-lg tracking-wide text-[#77ABC0]">{BAND_NAME}</span>
-            <span className="text-[9px] bg-[#E8F1E9] text-[#5F7A61] px-1.5 py-0.5 rounded-full font-bold ml-1">v4.2</span>
+            <span className="text-[9px] bg-[#E8F1E9] text-[#5F7A61] px-1.5 py-0.5 rounded-full font-bold ml-1">v4.0</span>
           </div>
           <div className="flex items-center gap-2">
             {role.admin && <span className="bg-rose-100 text-rose-600 text-[10px] px-2 py-0.5 rounded-full font-bold">Admin</span>}
@@ -895,11 +910,8 @@ const TrackList = ({ session, db, user, role, members }) => {
   const [newTrackName, setNewTrackName] = useState("");
   const [newComment, setNewComment] = useState("");
   
-  // 新增：連結列表編輯狀態
-  const [editingLinksId, setEditingLinksId] = useState(null); // 當前正在編輯連結的 track ID
-  const [tempLinks, setTempLinks] = useState([]); // 暫存該 track 的連結陣列
-  const [newLinkUrl, setNewLinkUrl] = useState("");
-  const [newLinkLabel, setNewLinkLabel] = useState("");
+  const [editingLinkId, setEditingLinkId] = useState(null);
+  const [tempLinkVal, setTempLinkVal] = useState("");
 
   const tracks = Array.isArray(session.tracks) ? session.tracks : [];
   const auth = getAuth();
@@ -941,10 +953,7 @@ const TrackList = ({ session, db, user, role, members }) => {
   };
 
   const handleDeleteComment = async (trackId, comment, commentIdx) => { 
-      if (!checkPermission(comment.uid)) {
-          alert("只能修改自己的留言喔！");
-          return;
-      }
+      if (!checkPermission(comment.uid)) return;
       if (!confirm("刪除留言?")) return; 
       
       const updatedTracks = tracks.map(t => { if (t.id === trackId) { const newComments = [...t.comments]; newComments.splice(commentIdx, 1); return { ...t, comments: newComments }; } return t; }); 
@@ -952,168 +961,93 @@ const TrackList = ({ session, db, user, role, members }) => {
   };
 
   const handleEditComment = async (trackId, comment, commentIdx) => {
-      if (!checkPermission(comment.uid)) {
-          alert("只能修改自己的留言喔！");
-          return;
-      }
+      if (!checkPermission(comment.uid)) return;
       
       const newVal = prompt("編輯留言", comment.text);
       if (newVal === null || newVal === comment.text) return; 
 
-      const updatedTracks = tracks.map(t => { if (t.id === trackId) { const newComments = [...t.comments]; newComments[commentIdx].text = newVal; return { ...t, comments: newComments }; } return t; }); 
+      const updatedTracks = tracks.map(t => { if (t.id === trackId) { const newComments = [...t.comments]; newComments.splice(commentIdx, 1); return { ...t, comments: newComments }; } return t; }); 
       await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks }); 
   };
 
-  // ----------------------------------------------------
-  // 新增：多連結管理功能 (Multi-link Support)
-  // ----------------------------------------------------
-  
-  // 開啟連結管理器
-  const openLinkManager = (track) => {
-      setEditingLinksId(track.id);
-      // 相容舊資料：如果只有 link 字串，轉為陣列
-      let currentLinks = Array.isArray(track.links) ? track.links : [];
-      if (track.link && currentLinks.length === 0) {
-          currentLinks = [{ url: track.link, label: "連結" }];
-      }
-      setTempLinks(currentLinks);
-      setNewLinkUrl("");
-      setNewLinkLabel("");
+  const handleUpdateLink = async (trackId, link) => { 
+      const updatedTracks = tracks.map(t => { if (t.id === trackId) { return { ...t, link }; } return t; }); 
+      await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks }); 
   };
-
-  // 新增連結到暫存
-  const addLinkToTemp = () => {
-      if (!newLinkUrl.trim()) {
-          alert("請輸入連結網址！"); // 修正：空值時跳出提示
-          return;
-      }
-      const label = newLinkLabel.trim() || "連結";
-      setTempLinks([...tempLinks, { url: newLinkUrl.trim(), label }]);
-      setNewLinkUrl("");
-      setNewLinkLabel("");
-  };
-
-  // 刪除暫存連結
-  const removeLinkFromTemp = (idx) => {
-      const newArr = [...tempLinks];
-      newArr.splice(idx, 1);
-      setTempLinks(newArr);
-  };
-
-  // 儲存所有連結變更回 Firebase
-  const saveAllLinks = async (trackId) => {
-      const updatedTracks = tracks.map(t => {
-          if (t.id === trackId) {
-              return { ...t, links: tempLinks, link: tempLinks.length > 0 ? tempLinks[0].url : "" }; // 同步更新舊欄位以防萬一
-          }
-          return t;
-      });
-      await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks });
-      setEditingLinksId(null);
-  };
+  const startEditLink = (trackId, currentLink) => { setEditingLinkId(trackId); setTempLinkVal(currentLink || ""); };
+  const saveLink = async (trackId) => { await handleUpdateLink(trackId, tempLinkVal); setEditingLinkId(null); };
+  const cancelEditLink = () => { setEditingLinkId(null); setTempLinkVal(""); };
+  const deleteLink = async (trackId) => { if(confirm("確定要移除這個連結嗎？")) { await handleUpdateLink(trackId, ""); } };
 
   return (
     <div className="p-3 space-y-3">
-      {tracks.map(t => {
-          // 顯示用連結處理
-          let displayLinks = Array.isArray(t.links) ? t.links : [];
-          if (t.link && displayLinks.length === 0) displayLinks = [{ url: t.link, label: "連結" }];
-
-          return (
-            <div key={t.id} className="border border-[#E0E0D9] rounded-2xl overflow-hidden">
-              <div className="bg-[#FAFAF9] p-4 flex justify-between items-center cursor-pointer" onClick={() => setExpandedTrack(expandedTrack === t.id ? null : t.id)}>
-                <div className="flex items-center gap-2 overflow-hidden flex-1 min-w-0">
-                    <span className="font-bold text-[#725E77] truncate">{t.title}</span>
-                    {/* 顯示第一筆連結的快速圖示 */}
-                    {displayLinks.length > 0 && (
-                        <a href={displayLinks[0].url} target="_blank" onClick={e=>e.stopPropagation()} className="text-[#77ABC0] hover:text-[#50656e] bg-white p-1 rounded-full shadow-sm flex-shrink-0"><ExternalLink size={14}/></a>
-                    )}
-                    {displayLinks.length > 1 && <span className="text-[10px] bg-slate-200 text-slate-500 px-1.5 rounded-full">+{displayLinks.length-1}</span>}
-                </div>
-                <ChevronDown size={16} className={`text-[#C5B8BF] ${expandedTrack === t.id ? 'rotate-180' : ''} flex-shrink-0 ml-2`}/>
-              </div>
-              
-              {expandedTrack === t.id && (
-                <div className="p-4 bg-white border-t border-[#E0E0D9] space-y-3">
-                  
-                  {/* 連結列表區域 */}
-                  {editingLinksId === t.id ? (
-                      // === 編輯模式 ===
-                      <div className="bg-[#F0F4F5] p-3 rounded-xl border border-[#77ABC0] space-y-2">
-                          <h4 className="text-xs font-bold text-[#77ABC0] mb-1">編輯連結</h4>
-                          {tempLinks.map((link, idx) => (
-                              <div key={idx} className="flex items-center gap-2 bg-white p-1.5 rounded-lg border border-[#E0E0D9]">
-                                  <div className="flex-1 min-w-0 flex flex-col">
-                                      <span className="text-[10px] font-bold text-slate-500">{link.label}</span>
-                                      <span className="text-[10px] text-slate-400 truncate">{link.url}</span>
-                                  </div>
-                                  <button onClick={() => removeLinkFromTemp(idx)} className="text-red-400 p-1 hover:bg-red-50 rounded"><X size={14}/></button>
-                              </div>
-                          ))}
-                          <div className="flex gap-2 items-center mt-2">
-                              <input className="flex-1 bg-white p-2 rounded-lg text-xs outline-none" placeholder="網址 (https://...)" value={newLinkUrl} onChange={e=>setNewLinkUrl(e.target.value)} />
-                              <input className="w-20 bg-white p-2 rounded-lg text-xs outline-none" placeholder="名稱" value={newLinkLabel} onChange={e=>setNewLinkLabel(e.target.value)} />
-                              {/* 修正：移除 disabled，改用 alert 提示 */}
-                              <button onClick={addLinkToTemp} className="bg-[#77ABC0] text-white p-2 rounded-lg"><Plus size={14}/></button>
-                          </div>
-                          <div className="flex gap-2 pt-2 mt-2 border-t border-white/50">
-                              <button onClick={() => setEditingLinksId(null)} className="flex-1 py-1.5 text-xs text-slate-500 bg-white rounded-lg">取消</button>
-                              <button onClick={() => saveAllLinks(t.id)} className="flex-1 py-1.5 text-xs text-white bg-[#77ABC0] rounded-lg">儲存變更</button>
-                          </div>
-                      </div>
-                  ) : (
-                      // === 檢視模式 ===
-                      <div className="bg-[#F0F4F5] p-2 rounded-xl flex flex-wrap gap-2 items-center">
-                          {displayLinks.length === 0 && <span className="text-xs text-[#C5B8BF] italic ml-1">尚無連結</span>}
-                          {displayLinks.map((link, idx) => (
-                              <a key={idx} href={link.url} target="_blank" className="flex items-center gap-1 bg-white border border-[#E0E0D9] px-2 py-1 rounded-lg text-xs text-[#725E77] hover:border-[#77ABC0] hover:text-[#77ABC0] transition">
-                                  <LinkIcon size={12}/> {link.label || "連結"}
-                              </a>
-                          ))}
-                          <button onClick={() => openLinkManager(t)} className="px-2 py-1 rounded-lg text-xs bg-[#E0E0D9]/50 text-[#725E77] hover:bg-[#E0E0D9] flex items-center gap-1 ml-auto">
-                              <Settings size={12}/> 管理連結
-                          </button>
-                      </div>
-                  )}
-
-                  {/* 留言區域 */}
-                  <div className="space-y-2 mt-2">
-                      {(t.comments || []).map((c, i) => {
-                          let displayName = '團員';
-                          if (c.uid) {
-                              const found = members.find(m => m.id === c.uid);
-                              if (found) displayName = found.nickname;
-                              else displayName = c.user || '團員';
-                          } else {
-                              displayName = c.user || '團員';
-                          }
-                          
-                          return (
-                          <div key={i} className="text-xs bg-[#FDFBF7] p-2 rounded-lg flex justify-between items-start">
-                              <div><span className="font-bold text-[#725E77]">{displayName}:</span> {c.text}</div>
-                              {/* 按鈕僅限本人或管理員顯示 */}
-                              {checkPermission(c.uid) && (
-                                <div className="flex gap-1">
-                                    <button onClick={() => handleEditComment(t.id, c, i)} className="text-[#77ABC0] p-1 rounded hover:bg-white"><Pencil size={12}/></button>
-                                    <button onClick={() => handleDeleteComment(t.id, c, i)} className="text-[#BC8F8F] p-1 rounded hover:bg-white"><Trash2 size={12}/></button>
-                                </div>
-                              )}
-                          </div>
-                      )})}
-                  </div>
-                  <div className="flex gap-2"><input className="w-full bg-[#FDFBF7] text-xs p-2 rounded-lg outline-none text-[#725E77]" placeholder="輸入留言..." value={newComment} onChange={e => setNewComment(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAddComment(t.id)} /><button onClick={() => handleAddComment(t.id)} className="text-[#77ABC0]"><Check size={16}/></button></div>
-                </div>
-              )}
+      {tracks.map(t => (
+        <div key={t.id} className="border border-[#E0E0D9] rounded-2xl overflow-hidden">
+          <div className="bg-[#FAFAF9] p-4 flex justify-between items-center cursor-pointer" onClick={() => setExpandedTrack(expandedTrack === t.id ? null : t.id)}>
+            <div className="flex items-center gap-2 overflow-hidden">
+                <span className="font-bold text-[#725E77] truncate">{t.title}</span>
+                {t.link && <a href={t.link} target="_blank" onClick={e=>e.stopPropagation()} className="text-[#77ABC0] hover:text-[#50656e] bg-white p-1 rounded-full shadow-sm"><ExternalLink size={14}/></a>}
             </div>
-          );
-      })}
+            <ChevronDown size={16} className={`text-[#C5B8BF] ${expandedTrack === t.id ? 'rotate-180' : ''}`}/>
+          </div>
+          {expandedTrack === t.id && (
+            <div className="p-4 bg-white border-t border-[#E0E0D9] space-y-3">
+              {editingLinkId === t.id ? (
+                  <div className="flex gap-2 items-center bg-[#F0F4F5] p-2 rounded-lg border border-[#77ABC0]">
+                      <LinkIcon size={14} className="text-[#77ABC0] shrink-0"/>
+                      <input className="bg-transparent text-xs w-full outline-none text-[#725E77]" placeholder="貼上連結 (Drive/YouTube)..." value={tempLinkVal} autoFocus onChange={(e) => setTempLinkVal(e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter') saveLink(t.id); else if(e.key === 'Escape') cancelEditLink(); }} />
+                      <button onClick={() => saveLink(t.id)} className="text-[#77ABC0] hover:bg-white p-1 rounded transition"><Check size={16}/></button>
+                      <button onClick={cancelEditLink} className="text-[#BC8F8F] hover:bg-white p-1 rounded transition"><X size={16}/></button>
+                  </div>
+              ) : (
+                  <div className="flex items-center justify-between bg-[#F0F4F5] p-2 rounded-lg group/link">
+                      <div className="flex items-center gap-2 overflow-hidden flex-1">
+                          <LinkIcon size={14} className="text-[#C5B8BF] shrink-0"/>
+                          {t.link ? (<a href={t.link} target="_blank" className="text-xs text-[#77ABC0] underline truncate block hover:text-[#50656e]">{t.link}</a>) : (<span className="text-xs text-[#C5B8BF] italic">尚未新增連結</span>)}
+                      </div>
+                      <div className="flex gap-1 shrink-0 ml-2">
+                          <button onClick={() => startEditLink(t.id, t.link)} className="text-[#725E77] hover:bg-white p-1.5 rounded transition bg-white/50 shadow-sm" title="編輯連結"><Pencil size={12}/></button>
+                          {t.link && <button onClick={() => deleteLink(t.id)} className="text-[#BC8F8F] hover:bg-white p-1.5 rounded transition bg-white/50 shadow-sm" title="移除連結"><Trash2 size={12}/></button>}
+                      </div>
+                  </div>
+              )}
+
+              {(t.comments || []).map((c, i) => {
+                  let displayName = '團員';
+                  if (c.uid) {
+                      const found = members.find(m => m.id === c.uid);
+                      if (found) displayName = found.nickname;
+                      else displayName = c.user || '團員';
+                  } else {
+                      displayName = c.user || '團員';
+                  }
+                  
+                  return (
+                  <div key={i} className="text-xs bg-[#FDFBF7] p-2 rounded-lg flex justify-between items-start">
+                      <div><span className="font-bold text-[#725E77]">{displayName}:</span> {c.text}</div>
+                      {/* 按鈕僅限本人或管理員顯示 */}
+                      {checkPermission(c.uid) && (
+                        <div className="flex gap-1">
+                            <button onClick={() => handleEditComment(t.id, c, i)} className="text-[#77ABC0] p-1 rounded hover:bg-white"><Pencil size={12}/></button>
+                            <button onClick={() => handleDeleteComment(t.id, c, i)} className="text-[#BC8F8F] p-1 rounded hover:bg-white"><Trash2 size={12}/></button>
+                        </div>
+                      )}
+                  </div>
+              )})}
+              <div className="flex gap-2"><input className="w-full bg-[#FDFBF7] text-xs p-2 rounded-lg outline-none text-[#725E77]" placeholder="輸入留言..." value={newComment} onChange={e => setNewComment(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAddComment(t.id)} /><button onClick={() => handleAddComment(t.id)} className="text-[#77ABC0]"><Check size={16}/></button></div>
+            </div>
+          )}
+        </div>
+      ))}
       <div className="flex gap-2"><input className="flex-1 bg-[#FDFBF7] border border-[#E0E0D9] rounded-xl px-3 text-xs outline-none" placeholder="輸入新歌名..." value={newTrackName} onChange={e => setNewTrackName(e.target.value)} /><button onClick={handleAddTrack} className="px-4 py-3 bg-[#77ABC0]/10 text-[#77ABC0] font-bold text-xs flex items-center justify-center gap-1 border border-dashed border-[#77ABC0]/50 hover:bg-[#77ABC0]/20 rounded-2xl transition"><Plus size={14}/> 新增</button></div>
     </div>
   );
 };
 
-const PracticeFeeCalculator = ({ session, members = [], settings = {}, role = {}, db }) => {
-  const [selectedIds, setSelectedIds] = useState(session.attendance || []); 
+// 🛡️ v3.6 修正：PracticeFeeCalculator 強力防呆
+const PracticeFeeCalculator = ({ session, members = [], settings = {}, role = {}, db }) => { 
+  // Ensure selectedIds is an array
+  const [selectedIds, setSelectedIds] = useState(Array.isArray(session.attendance) ? session.attendance : []); 
   const [hours, setHours] = useState(2);
   const [hasKB, setHasKB] = useState(true);
   
@@ -1157,7 +1091,8 @@ const PracticeFeeCalculator = ({ session, members = [], settings = {}, role = {}
   );
 };
 
-const MiscFeeCalculator = ({ session, members, db }) => {
+// 🛡️ v3.8 修正：MiscFeeCalculator 加入強力防呆，防止未載入完成時崩潰
+const MiscFeeCalculator = ({ session, members = [], db }) => {
   const [items, setItems] = useState(session.miscExpenses || []); 
   const [newItem, setNewItem] = useState({ item: '', amount: '', payerId: '', splitters: [] });
   
@@ -1196,6 +1131,7 @@ const MiscFeeCalculator = ({ session, members, db }) => {
   );
 };
 
+// 🛡️ v3.5 修正：AlcoholFeeCalculator 真·強力防呆，解決未載入完成時的崩潰
 const AlcoholFeeCalculator = ({ members = [], settings = {} }) => {
   const [amount, setAmount] = useState('');
   const [payerId, setPayerId] = useState('');
@@ -1349,11 +1285,12 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
                           ) : (
                               <div className="text-base text-[#6E7F9B] flex justify-between items-start">
                                   <span className="leading-snug"><span className="font-bold text-[#725E77]">{c.user}:</span> {c.text}</span>
-                                  {/* 按鈕永遠顯示，點擊時檢查權限 */}
-                                  <div className="flex gap-1 shrink-0 ml-2">
-                                      <button onClick={() => startEditComment(a.id, c, idx)} className="text-[#77ABC0] p-1 rounded hover:bg-[#F0F4F5]" title="編輯"><Pencil size={14}/></button>
-                                      <button onClick={() => handleDeleteComment(a.id, c, idx)} className="text-[#BC8F8F] p-1 rounded hover:bg-[#F0F4F5]" title="刪除"><Trash2 size={14}/></button>
-                                  </div>
+                                  {checkPermission(c.uid) && (
+                                    <div className="flex gap-1 shrink-0 ml-2">
+                                        <button onClick={() => startEditComment(a.id, c, idx)} className="text-[#77ABC0] p-1 rounded hover:bg-[#F0F4F5]" title="編輯"><Pencil size={14}/></button>
+                                        <button onClick={() => handleDeleteComment(a.id, c, idx)} className="text-[#BC8F8F] p-1 rounded hover:bg-[#F0F4F5]" title="刪除"><Trash2 size={14}/></button>
+                                    </div>
+                                  )}
                               </div>
                           )}
                       </div>
@@ -1397,12 +1334,6 @@ const TechView = ({ songs = [], db, role, user }) => {
   const handleAdd = async () => { if (!newSong.title || !db) return; await addDoc(getCollectionRef(db, 'songs'), { ...newSong, user: user.displayName, uid: user.uid, links: [] }); setShowAdd(false); setNewSong({ title: '', artist: '', link: '', type: 'cover' }); };
   const handleDelete = async (id) => { if (!db || !confirm("刪除此資源？")) return; await deleteDoc(getDocRef(db, 'songs', id)); };
   
-  // 新增：資源連結管理狀態
-  const [editingLinksId, setEditingLinksId] = useState(null);
-  const [tempLinks, setTempLinks] = useState([]);
-  const [newLinkUrl, setNewLinkUrl] = useState("");
-  const [newLinkLabel, setNewLinkLabel] = useState("");
-
   const startEdit = (song) => {
     if (role.admin || song.uid === user.uid) {
         setEditingSongId(song.id);
@@ -1434,11 +1365,15 @@ const TechView = ({ songs = [], db, role, user }) => {
 
   // 資源連結操作
   const addLinkToEditForm = () => {
-      if (!newLinkUrl.trim()) { alert("請輸入連結！"); return; }
-      const label = newLinkLabel.trim() || "連結";
-      setEditForm({ ...editForm, links: [...(editForm.links || []), { url: newLinkUrl.trim(), label }] });
-      setNewLinkUrl("");
-      setNewLinkLabel("");
+      // 修正：空值時跳出提示，而非靜默失敗
+      if (!editForm._newLinkUrl?.trim()) { alert("請輸入連結！"); return; }
+      const label = editForm._newLinkLabel?.trim() || "連結";
+      setEditForm({ 
+          ...editForm, 
+          links: [...(editForm.links || []), { url: editForm._newLinkUrl.trim(), label }],
+          _newLinkUrl: "",
+          _newLinkLabel: ""
+      });
   };
 
   const removeLinkFromEditForm = (idx) => {
@@ -1452,7 +1387,7 @@ const TechView = ({ songs = [], db, role, user }) => {
       <div className="flex justify-between items-center px-1"><h2 className="text-2xl font-bold text-[#725E77]">資源分享</h2><div className="flex bg-[#E0E0D9]/50 p-1 rounded-lg"><button onClick={() => setViewMode('list')} className={`p-1.5 rounded-md ${viewMode === 'list' ? 'bg-white text-[#725E77]' : 'text-[#C5B8BF]'}`}><List size={16}/></button><button onClick={() => setViewMode('grid')} className={`p-1.5 rounded-md ${viewMode === 'grid' ? 'bg-white text-[#725E77]' : 'text-[#C5B8BF]'}`}><LayoutGrid size={16}/></button></div></div>
       <div className="flex gap-2 overflow-x-auto pb-1">{['all', 'cover', 'tech', 'gear'].map(f => (<button key={f} onClick={() => setFilter(f)} className={`px-4 py-1.5 rounded-full text-xs font-bold capitalize whitespace-nowrap transition ${filter === f ? 'bg-[#77ABC0] text-white' : 'bg-white border border-[#E0E0D9] text-[#C5B8BF]'}`}>{f}</button>))}</div>
       <button onClick={() => setShowAdd(true)} className="w-full py-3 text-[#77ABC0] font-bold text-xs flex items-center justify-center gap-1 border border-dashed border-[#77ABC0]/50 hover:bg-[#77ABC0]/5 rounded-2xl transition"><Plus size={14}/> 分享資源</button>
-      {showAdd && (<div className="bg-white p-4 rounded-[24px] border border-[#77ABC0] space-y-3"><input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="標題" value={newSong.title} onChange={e=>setNewSong({...newSong, title: e.target.value})} /><input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="說明" value={newSong.artist} onChange={e=>setNewSong({...newSong, artist: e.target.value})} /><select className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" value={newSong.type} onChange={e=>setNewSong({...newSong, type: e.target.value})}><option value="cover">Cover</option><option value="tech">Tech</option><option value="gear">Gear</option></select><div className="flex gap-2"><button onClick={() => setShowAdd(false)} className="flex-1 p-2 text-xs text-slate-400">取消</button><button onClick={handleAdd} className="flex-1 p-2 bg-[#77ABC0] text-white rounded-lg text-xs font-bold">發布</button></div></div>)}
+      {showAdd && (<div className="bg-white p-4 rounded-[24px] border border-[#77ABC0] space-y-3"><input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="標題" value={newSong.title} onChange={e=>setNewSong({...newSong, title: e.target.value})} /><input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="說明" value={newSong.artist} onChange={e=>setNewSong({...newSong, artist: e.target.value})} /><input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="連結" value={newSong.link} onChange={e=>setNewSong({...newSong, link: e.target.value})} /><select className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" value={newSong.type} onChange={e=>setNewSong({...newSong, type: e.target.value})}><option value="cover">Cover</option><option value="tech">Tech</option><option value="gear">Gear</option></select><div className="flex gap-2"><button onClick={() => setShowAdd(false)} className="flex-1 p-2 text-xs text-slate-400">取消</button><button onClick={handleAdd} className="flex-1 p-2 bg-[#77ABC0] text-white rounded-lg text-xs font-bold">發布</button></div></div>)}
       
       <div className={viewMode === 'grid' ? "grid grid-cols-2 gap-3" : "space-y-3"}>
         {filteredSongs.map(s => {
@@ -1482,8 +1417,8 @@ const TechView = ({ songs = [], db, role, user }) => {
                                  </div>
                              ))}
                              <div className="flex gap-1">
-                                 <input className="flex-1 bg-white p-1 text-xs border rounded" placeholder="URL" value={newLinkUrl} onChange={e=>setNewLinkUrl(e.target.value)}/>
-                                 <input className="w-16 bg-white p-1 text-xs border rounded" placeholder="名稱" value={newLinkLabel} onChange={e=>setNewLinkLabel(e.target.value)}/>
+                                 <input className="flex-1 bg-white p-1 text-xs border rounded" placeholder="URL" value={editForm._newLinkUrl || ""} onChange={e=>setEditForm({...editForm, _newLinkUrl: e.target.value})}/>
+                                 <input className="w-16 bg-white p-1 text-xs border rounded" placeholder="名稱" value={editForm._newLinkLabel || ""} onChange={e=>setEditForm({...editForm, _newLinkLabel: e.target.value})}/>
                                  <button onClick={addLinkToEditForm}><Plus size={14} className="text-[#77ABC0]"/></button>
                              </div>
                         </div>
@@ -1516,8 +1451,9 @@ const TechView = ({ songs = [], db, role, user }) => {
                     </div>
 
                     <div className="flex flex-wrap gap-1 mt-2">
+                        {displayLinks.length === 0 && <span className="text-xs text-[#C5B8BF] italic">無連結</span>}
                         {displayLinks.map((l, i) => (
-                            <a key={i} href={l.url} target="_blank" className="text-[10px] bg-[#F0F4F5] text-[#725E77] px-2 py-1 rounded-full flex items-center gap-1 hover:bg-[#E0E7EA]">
+                            <a key={i} href={l.url} target="_blank" className="text-[10px] bg-[#F0F4F5] text-[#725E77] px-2 py-1 rounded-full flex items-center gap-1 hover:bg-[#E0E7EA] hover:text-[#77ABC0] transition border border-transparent hover:border-[#77ABC0]/30">
                                 <LinkIcon size={10}/> {l.label || '連結'}
                             </a>
                         ))}
@@ -1568,7 +1504,6 @@ const RepertoireManager = ({ repertoire = [], db, role, user }) => {
     const [editingSong, setEditingSong] = useState(null);
     const [form, setForm] = useState({ title: '', artist: '', key: '', links: [], tags: '' });
     
-    // 新增：連結編輯用狀態
     const [newLinkUrl, setNewLinkUrl] = useState("");
     const [newLinkLabel, setNewLinkLabel] = useState("");
 
@@ -1688,47 +1623,31 @@ const RepertoireManager = ({ repertoire = [], db, role, user }) => {
             )}
 
             <div className="space-y-3">
-                {filteredSongs.map(s => {
-                    const canEdit = role.admin || s.uid === user.uid;
-                    // 相容性處理：顯示舊資料或新資料
-                    let displayLinks = Array.isArray(s.links) ? s.links : [];
-                    if (displayLinks.length === 0) {
-                        if (s.youtube) displayLinks.push({ label: 'YouTube', url: s.youtube });
-                        if (s.sheet) displayLinks.push({ label: '樂譜', url: s.sheet });
-                    }
-
-                    return (
-                    <div key={s.id} className="bg-white p-4 rounded-[20px] border border-[#E0E0D9] shadow-sm flex flex-col gap-2 group relative">
-                        <div className="flex justify-between items-start">
-                            <div>
-                                <div className="flex items-center gap-2 mb-1">
-                                    <h4 className="font-bold text-[#725E77] truncate text-lg">{s.title}</h4>
-                                    {s.key && <span className="bg-[#F0F4F5] text-[#6E7F9B] text-[10px] font-bold px-1.5 py-0.5 rounded">{s.key}</span>}
-                                </div>
-                                <div className="flex items-center gap-2 text-xs text-[#C5B8BF]">
-                                    <span>{s.artist}</span>
-                                    {s.tags && <span>• {s.tags}</span>}
-                                </div>
+                {filteredSongs.map(s => (
+                    <div key={s.id} className="bg-white p-4 rounded-[20px] border border-[#E0E0D9] shadow-sm flex justify-between items-center group relative">
+                        <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                                <h4 className="font-bold text-[#725E77] truncate text-lg">{s.title}</h4>
+                                {s.key && <span className="bg-[#F0F4F5] text-[#6E7F9B] text-[10px] font-bold px-1.5 py-0.5 rounded">{s.key}</span>}
                             </div>
-                            
-                            {canEdit && (
-                                <div className="flex gap-1">
-                                    <button onClick={() => startEdit(s)} className="p-1.5 text-[#77ABC0] bg-white/80 rounded-full hover:bg-white shadow-sm transition"><Pencil size={14}/></button>
-                                    <button onClick={() => handleDelete(s.id)} className="p-1.5 text-[#BC8F8F] bg-white/80 rounded-full hover:bg-white shadow-sm transition"><Trash2 size={14}/></button>
-                                </div>
-                            )}
+                            <div className="flex items-center gap-2 text-xs text-[#C5B8BF]">
+                                <span>{s.artist}</span>
+                                {s.tags && <span>• {s.tags}</span>}
+                            </div>
                         </div>
                         
-                        <div className="flex flex-wrap gap-2 mt-1">
-                            {displayLinks.length === 0 && <span className="text-xs text-[#C5B8BF] italic">無連結</span>}
-                            {displayLinks.map((l, i) => (
-                                <a key={i} href={l.url} target="_blank" className="text-[10px] bg-[#F0F4F5] text-[#725E77] px-2 py-1 rounded-full flex items-center gap-1 hover:bg-[#E0E7EA] hover:text-[#77ABC0] transition border border-transparent hover:border-[#77ABC0]/30">
-                                    <LinkIcon size={10}/> {l.label}
+                        <div className="flex items-center gap-2 pl-2">
+                            {(Array.isArray(s.links) ? s.links : []).map((l, i) => (
+                                <a key={i} href={l.url} target="_blank" className="p-2 bg-blue-50 text-blue-500 rounded-full hover:bg-blue-100 transition" title={l.label}>
+                                    <LinkIcon size={18} />
                                 </a>
                             ))}
+                            {/* Repertoire Edit/Delete is allowed for everyone (collaboration mode) */}
+                            <button onClick={() => startEdit(s)} className="p-2 text-[#C5B8BF] hover:text-[#77ABC0]"><Pencil size={16}/></button>
+                            {role.admin && <button onClick={() => handleDelete(s.id)} className="p-2 text-[#C5B8BF] hover:text-red-500"><Trash2 size={16}/></button>}
                         </div>
                     </div>
-                )})}
+                ))}
                 {filteredSongs.length === 0 && <div className="text-center text-[#C5B8BF] text-xs py-8">沒有找到相關歌曲</div>}
             </div>
         </div>
