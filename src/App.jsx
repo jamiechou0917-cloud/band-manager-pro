@@ -25,7 +25,7 @@ import {
   Ghost, Pencil, Trash2, Lock, Save, MinusCircle, FilePlus, AlertTriangle,
   Database, Download, Filter, Search, Clock, CheckSquare,
   User, StickyNote, ArrowRight, Calculator, Link as LinkIcon, Youtube,
-  BookOpen, FileJson, UploadCloud, Library, Share, ArrowUp, ArrowDown
+  BookOpen, FileJson, UploadCloud, Library, Share, ArrowUp, ArrowDown, ExternalLink as LinkExternal
 } from 'lucide-react';
 
 // ==========================================
@@ -292,7 +292,6 @@ const App = () => {
     if (!db || !user) return;
     const unsubMembers = onSnapshot(getCollectionRef(db, 'members'), (snap) => {
         const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        // 修正：依據 order 欄位排序，確保順序可控
         data.sort((a, b) => (a.order || 0) - (b.order || 0));
         setMembers(data);
         setMembersLoaded(true);
@@ -323,7 +322,6 @@ const App = () => {
     return () => { unsubMembers(); unsubLogs(); unsubAlcohol(); unsubSongs(); unsubRepertoire(); unsubGeneral(); };
   }, [user]);
 
-  // 修正：全面改用 Popup 登入，避免 missing initial state 問題
   const handleLogin = async () => {
     try { 
       await signInWithPopup(auth, googleProvider); 
@@ -422,7 +420,7 @@ const App = () => {
           <div className="flex items-center gap-3">
             {showImage ? <img src={BAND_LOGO_BASE64} alt="Logo" className="w-9 h-9 rounded-xl object-contain bg-white shadow-sm" onError={() => setImgError(true)} /> : <BandLogo />}
             <span className="font-bold text-lg tracking-wide text-[#77ABC0]">{BAND_NAME}</span>
-            <span className="text-[9px] bg-[#E8F1E9] text-[#5F7A61] px-1.5 py-0.5 rounded-full font-bold ml-1">v4.0</span>
+            <span className="text-[9px] bg-[#E8F1E9] text-[#5F7A61] px-1.5 py-0.5 rounded-full font-bold ml-1">v4.1</span>
           </div>
           <div className="flex items-center gap-2">
             {role.admin && <span className="bg-rose-100 text-rose-600 text-[10px] px-2 py-0.5 rounded-full font-bold">Admin</span>}
@@ -515,17 +513,14 @@ const DashboardView = ({ members = [], generalData = {}, alcoholCount = 0, db, r
   const handleSaveMember = async (data) => { if (!db) return; data.id ? await updateDoc(getDocRef(db, 'members', data.id), data) : await addDoc(getCollectionRef(db, 'members'), data); setEditingMember(null); };
   const handleDeleteMember = async (id) => { if (confirm("確定要刪除這位團員嗎？")) { await deleteDoc(getDocRef(db, 'members', id)); } };
   
-  // 修正：新增排序功能 (moveMember)
   const moveMember = async (index, direction) => {
       if (!role.admin) return;
       const newMembers = [...members];
       const targetIndex = index + direction;
       if (targetIndex < 0 || targetIndex >= newMembers.length) return;
       
-      // Swap elements
       [newMembers[index], newMembers[targetIndex]] = [newMembers[targetIndex], newMembers[index]];
       
-      // Batch update order fields
       const batch = writeBatch(db);
       newMembers.forEach((m, idx) => {
           const ref = getDocRef(db, 'members', m.id);
@@ -632,7 +627,6 @@ const DashboardView = ({ members = [], generalData = {}, alcoholCount = 0, db, r
             <h2 className="text-xl font-black text-[#E0E7EA] uppercase tracking-widest drop-shadow-md">{isValidDate ? nextPractice.title : "無練團安排"}</h2>
             <div className="flex gap-2">
               {role.admin && <button onClick={() => setEditingPractice(true)} className="bg-white/20 p-2 rounded-full backdrop-blur-sm hover:bg-white/40"><Pencil size={18}/></button>}
-              {/* 修正：移除倒數卡片上的行事曆連結 */}
             </div>
           </div>
           <div className="text-4xl font-black mb-1 font-mono tracking-tight drop-shadow-md">
@@ -685,7 +679,6 @@ const DashboardView = ({ members = [], generalData = {}, alcoholCount = 0, db, r
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div className="flex flex-col gap-1 mr-2">
-                     {/* 修正：加入上移下移按鈕，僅限管理員操作 */}
                      {role.admin && (
                         <>
                           <button onClick={(e) => { e.stopPropagation(); moveMember(index, -1); }} className="p-0.5 hover:bg-slate-100 rounded text-slate-400"><ArrowUp size={12}/></button>
@@ -693,7 +686,6 @@ const DashboardView = ({ members = [], generalData = {}, alcoholCount = 0, db, r
                         </>
                      )}
                   </div>
-                  {/* 修正：優先顯示 avatarText，若無則顯示暱稱首字 */}
                   <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white font-bold text-lg border-2 border-white shadow-sm overflow-hidden" style={{backgroundColor: style.color}}>
                     {m.avatarText || m.nickname?.[0] || 'M'}
                   </div>
@@ -737,7 +729,6 @@ const MemberEditModal = ({ member, onClose, onSave }) => {
         </div>
         <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm border border-[#77ABC0]/30" placeholder="Google Email (權限綁定用)" value={form.email || ''} onChange={e => setForm({...form, email: e.target.value})} />
         <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm" placeholder="頭像網址 (FB/IG圖片連結，選填)" value={form.avatarUrl || ''} onChange={e => setForm({...form, avatarUrl: e.target.value})} />
-        {/* 修正：新增頭像文字編輯欄位 */}
         <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm" placeholder="頭像文字 (預設為暱稱首字)" value={form.avatarText || ''} onChange={e => setForm({...form, avatarText: e.target.value})} />
         <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm" placeholder="樂器 (Vocal, Bass...)" value={form.instrument || ''} onChange={e => setForm({...form, instrument: e.target.value})} />
         <input type="date" className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm" value={form.birthday || ''} onChange={e => setForm({...form, birthday: e.target.value})} />
@@ -903,14 +894,17 @@ const TrackList = ({ session, db, user, role, members }) => {
   const [newTrackName, setNewTrackName] = useState("");
   const [newComment, setNewComment] = useState("");
   
-  const [editingLinkId, setEditingLinkId] = useState(null);
-  const [tempLinkVal, setTempLinkVal] = useState("");
+  // 新增：連結列表編輯狀態
+  const [editingLinksId, setEditingLinksId] = useState(null); // 當前正在編輯連結的 track ID
+  const [tempLinks, setTempLinks] = useState([]); // 暫存該 track 的連結陣列
+  const [newLinkUrl, setNewLinkUrl] = useState("");
+  const [newLinkLabel, setNewLinkLabel] = useState("");
 
   const tracks = Array.isArray(session.tracks) ? session.tracks : [];
   const auth = getAuth();
   const currentUser = auth.currentUser;
 
-  const handleAddTrack = async () => { if (!newTrackName.trim() || !db) return; const newTrack = { id: Date.now(), title: newTrackName, status: 'new', link: '', comments: [] }; await updateDoc(getDocRef(db, 'logs', session.id), { tracks: [...tracks, newTrack] }); setNewTrackName(""); };
+  const handleAddTrack = async () => { if (!newTrackName.trim() || !db) return; const newTrack = { id: Date.now(), title: newTrackName, status: 'new', links: [], comments: [] }; await updateDoc(getDocRef(db, 'logs', session.id), { tracks: [...tracks, newTrack] }); setNewTrackName(""); };
   
   const handleAddComment = async (trackId) => { 
       if (!newComment.trim()) return; 
@@ -946,7 +940,10 @@ const TrackList = ({ session, db, user, role, members }) => {
   };
 
   const handleDeleteComment = async (trackId, comment, commentIdx) => { 
-      if (!checkPermission(comment.uid)) return;
+      if (!checkPermission(comment.uid)) {
+          alert("只能修改自己的留言喔！");
+          return;
+      }
       if (!confirm("刪除留言?")) return; 
       
       const updatedTracks = tracks.map(t => { if (t.id === trackId) { const newComments = [...t.comments]; newComments.splice(commentIdx, 1); return { ...t, comments: newComments }; } return t; }); 
@@ -954,7 +951,10 @@ const TrackList = ({ session, db, user, role, members }) => {
   };
 
   const handleEditComment = async (trackId, comment, commentIdx) => {
-      if (!checkPermission(comment.uid)) return;
+      if (!checkPermission(comment.uid)) {
+          alert("只能修改自己的留言喔！");
+          return;
+      }
       
       const newVal = prompt("編輯留言", comment.text);
       if (newVal === null || newVal === comment.text) return; 
@@ -963,84 +963,152 @@ const TrackList = ({ session, db, user, role, members }) => {
       await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks }); 
   };
 
-  const handleUpdateLink = async (trackId, link) => { 
-      const updatedTracks = tracks.map(t => { if (t.id === trackId) { return { ...t, link }; } return t; }); 
-      await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks }); 
+  // ----------------------------------------------------
+  // 新增：多連結管理功能 (Multi-link Support)
+  // ----------------------------------------------------
+  
+  // 開啟連結管理器
+  const openLinkManager = (track) => {
+      setEditingLinksId(track.id);
+      // 相容舊資料：如果只有 link 字串，轉為陣列
+      let currentLinks = Array.isArray(track.links) ? track.links : [];
+      if (track.link && currentLinks.length === 0) {
+          currentLinks = [{ url: track.link, label: "連結" }];
+      }
+      setTempLinks(currentLinks);
+      setNewLinkUrl("");
+      setNewLinkLabel("");
   };
-  const startEditLink = (trackId, currentLink) => { setEditingLinkId(trackId); setTempLinkVal(currentLink || ""); };
-  const saveLink = async (trackId) => { await handleUpdateLink(trackId, tempLinkVal); setEditingLinkId(null); };
-  const cancelEditLink = () => { setEditingLinkId(null); setTempLinkVal(""); };
-  const deleteLink = async (trackId) => { if(confirm("確定要移除這個連結嗎？")) { await handleUpdateLink(trackId, ""); } };
+
+  // 新增連結到暫存
+  const addLinkToTemp = () => {
+      if (!newLinkUrl.trim()) return;
+      const label = newLinkLabel.trim() || "連結";
+      setTempLinks([...tempLinks, { url: newLinkUrl.trim(), label }]);
+      setNewLinkUrl("");
+      setNewLinkLabel("");
+  };
+
+  // 刪除暫存連結
+  const removeLinkFromTemp = (idx) => {
+      const newArr = [...tempLinks];
+      newArr.splice(idx, 1);
+      setTempLinks(newArr);
+  };
+
+  // 儲存所有連結變更回 Firebase
+  const saveAllLinks = async (trackId) => {
+      const updatedTracks = tracks.map(t => {
+          if (t.id === trackId) {
+              return { ...t, links: tempLinks, link: tempLinks.length > 0 ? tempLinks[0].url : "" }; // 同步更新舊欄位以防萬一
+          }
+          return t;
+      });
+      await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks });
+      setEditingLinksId(null);
+  };
 
   return (
     <div className="p-3 space-y-3">
-      {tracks.map(t => (
-        <div key={t.id} className="border border-[#E0E0D9] rounded-2xl overflow-hidden">
-          <div className="bg-[#FAFAF9] p-4 flex justify-between items-center cursor-pointer" onClick={() => setExpandedTrack(expandedTrack === t.id ? null : t.id)}>
-            <div className="flex items-center gap-2 overflow-hidden">
-                <span className="font-bold text-[#725E77] truncate">{t.title}</span>
-                {t.link && <a href={t.link} target="_blank" onClick={e=>e.stopPropagation()} className="text-[#77ABC0] hover:text-[#50656e] bg-white p-1 rounded-full shadow-sm"><ExternalLink size={14}/></a>}
-            </div>
-            <ChevronDown size={16} className={`text-[#C5B8BF] ${expandedTrack === t.id ? 'rotate-180' : ''}`}/>
-          </div>
-          {expandedTrack === t.id && (
-            <div className="p-4 bg-white border-t border-[#E0E0D9] space-y-3">
-              {editingLinkId === t.id ? (
-                  <div className="flex gap-2 items-center bg-[#F0F4F5] p-2 rounded-lg border border-[#77ABC0]">
-                      <LinkIcon size={14} className="text-[#77ABC0] shrink-0"/>
-                      <input className="bg-transparent text-xs w-full outline-none text-[#725E77]" placeholder="貼上連結 (Drive/YouTube)..." value={tempLinkVal} autoFocus onChange={(e) => setTempLinkVal(e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter') saveLink(t.id); else if(e.key === 'Escape') cancelEditLink(); }} />
-                      <button onClick={() => saveLink(t.id)} className="text-[#77ABC0] hover:bg-white p-1 rounded transition"><Check size={16}/></button>
-                      <button onClick={cancelEditLink} className="text-[#BC8F8F] hover:bg-white p-1 rounded transition"><X size={16}/></button>
-                  </div>
-              ) : (
-                  <div className="flex items-center justify-between bg-[#F0F4F5] p-2 rounded-lg group/link">
-                      <div className="flex items-center gap-2 overflow-hidden flex-1">
-                          <LinkIcon size={14} className="text-[#C5B8BF] shrink-0"/>
-                          {t.link ? (<a href={t.link} target="_blank" className="text-xs text-[#77ABC0] underline truncate block hover:text-[#50656e]">{t.link}</a>) : (<span className="text-xs text-[#C5B8BF] italic">尚未新增連結</span>)}
-                      </div>
-                      <div className="flex gap-1 shrink-0 ml-2">
-                          <button onClick={() => startEditLink(t.id, t.link)} className="text-[#725E77] hover:bg-white p-1.5 rounded transition bg-white/50 shadow-sm" title="編輯連結"><Pencil size={12}/></button>
-                          {t.link && <button onClick={() => deleteLink(t.id)} className="text-[#BC8F8F] hover:bg-white p-1.5 rounded transition bg-white/50 shadow-sm" title="移除連結"><Trash2 size={12}/></button>}
-                      </div>
-                  </div>
-              )}
+      {tracks.map(t => {
+          // 顯示用連結處理
+          let displayLinks = Array.isArray(t.links) ? t.links : [];
+          if (t.link && displayLinks.length === 0) displayLinks = [{ url: t.link, label: "連結" }];
 
-              {(t.comments || []).map((c, i) => {
-                  let displayName = '團員';
-                  if (c.uid) {
-                      const found = members.find(m => m.id === c.uid);
-                      if (found) displayName = found.nickname;
-                      else displayName = c.user || '團員';
-                  } else {
-                      displayName = c.user || '團員';
-                  }
+          return (
+            <div key={t.id} className="border border-[#E0E0D9] rounded-2xl overflow-hidden">
+              <div className="bg-[#FAFAF9] p-4 flex justify-between items-center cursor-pointer" onClick={() => setExpandedTrack(expandedTrack === t.id ? null : t.id)}>
+                <div className="flex items-center gap-2 overflow-hidden flex-1 min-w-0">
+                    <span className="font-bold text-[#725E77] truncate">{t.title}</span>
+                    {/* 顯示第一筆連結的快速圖示 */}
+                    {displayLinks.length > 0 && (
+                        <a href={displayLinks[0].url} target="_blank" onClick={e=>e.stopPropagation()} className="text-[#77ABC0] hover:text-[#50656e] bg-white p-1 rounded-full shadow-sm flex-shrink-0"><ExternalLink size={14}/></a>
+                    )}
+                    {displayLinks.length > 1 && <span className="text-[10px] bg-slate-200 text-slate-500 px-1.5 rounded-full">+{displayLinks.length-1}</span>}
+                </div>
+                <ChevronDown size={16} className={`text-[#C5B8BF] ${expandedTrack === t.id ? 'rotate-180' : ''} flex-shrink-0 ml-2`}/>
+              </div>
+              
+              {expandedTrack === t.id && (
+                <div className="p-4 bg-white border-t border-[#E0E0D9] space-y-3">
                   
-                  return (
-                  <div key={i} className="text-xs bg-[#FDFBF7] p-2 rounded-lg flex justify-between items-start">
-                      <div><span className="font-bold text-[#725E77]">{displayName}:</span> {c.text}</div>
-                      {/* 按鈕僅限本人或管理員顯示 */}
-                      {checkPermission(c.uid) && (
-                        <div className="flex gap-1">
-                            <button onClick={() => handleEditComment(t.id, c, i)} className="text-[#77ABC0] p-1 rounded hover:bg-white"><Pencil size={12}/></button>
-                            <button onClick={() => handleDeleteComment(t.id, c, i)} className="text-[#BC8F8F] p-1 rounded hover:bg-white"><Trash2 size={12}/></button>
-                        </div>
-                      )}
+                  {/* 連結列表區域 */}
+                  {editingLinksId === t.id ? (
+                      // === 編輯模式 ===
+                      <div className="bg-[#F0F4F5] p-3 rounded-xl border border-[#77ABC0] space-y-2">
+                          <h4 className="text-xs font-bold text-[#77ABC0] mb-1">編輯連結</h4>
+                          {tempLinks.map((link, idx) => (
+                              <div key={idx} className="flex items-center gap-2 bg-white p-1.5 rounded-lg border border-[#E0E0D9]">
+                                  <div className="flex-1 min-w-0 flex flex-col">
+                                      <span className="text-[10px] font-bold text-slate-500">{link.label}</span>
+                                      <span className="text-[10px] text-slate-400 truncate">{link.url}</span>
+                                  </div>
+                                  <button onClick={() => removeLinkFromTemp(idx)} className="text-red-400 p-1 hover:bg-red-50 rounded"><X size={14}/></button>
+                              </div>
+                          ))}
+                          <div className="flex gap-2 items-center mt-2">
+                              <input className="flex-1 bg-white p-2 rounded-lg text-xs outline-none" placeholder="網址 (https://...)" value={newLinkUrl} onChange={e=>setNewLinkUrl(e.target.value)} />
+                              <input className="w-20 bg-white p-2 rounded-lg text-xs outline-none" placeholder="名稱" value={newLinkLabel} onChange={e=>setNewLinkLabel(e.target.value)} />
+                              <button onClick={addLinkToTemp} className="bg-[#77ABC0] text-white p-2 rounded-lg" disabled={!newLinkUrl}><Plus size={14}/></button>
+                          </div>
+                          <div className="flex gap-2 pt-2 mt-2 border-t border-white/50">
+                              <button onClick={() => setEditingLinksId(null)} className="flex-1 py-1.5 text-xs text-slate-500 bg-white rounded-lg">取消</button>
+                              <button onClick={() => saveAllLinks(t.id)} className="flex-1 py-1.5 text-xs text-white bg-[#77ABC0] rounded-lg">儲存變更</button>
+                          </div>
+                      </div>
+                  ) : (
+                      // === 檢視模式 ===
+                      <div className="bg-[#F0F4F5] p-2 rounded-xl flex flex-wrap gap-2 items-center">
+                          {displayLinks.length === 0 && <span className="text-xs text-[#C5B8BF] italic ml-1">尚無連結</span>}
+                          {displayLinks.map((link, idx) => (
+                              <a key={idx} href={link.url} target="_blank" className="flex items-center gap-1 bg-white border border-[#E0E0D9] px-2 py-1 rounded-lg text-xs text-[#725E77] hover:border-[#77ABC0] hover:text-[#77ABC0] transition">
+                                  <LinkIcon size={12}/> {link.label || "連結"}
+                              </a>
+                          ))}
+                          <button onClick={() => openLinkManager(t)} className="px-2 py-1 rounded-lg text-xs bg-[#E0E0D9]/50 text-[#725E77] hover:bg-[#E0E0D9] flex items-center gap-1 ml-auto">
+                              <Settings size={12}/> 管理連結
+                          </button>
+                      </div>
+                  )}
+
+                  {/* 留言區域 */}
+                  <div className="space-y-2 mt-2">
+                      {(t.comments || []).map((c, i) => {
+                          let displayName = '團員';
+                          if (c.uid) {
+                              const found = members.find(m => m.id === c.uid);
+                              if (found) displayName = found.nickname;
+                              else displayName = c.user || '團員';
+                          } else {
+                              displayName = c.user || '團員';
+                          }
+                          
+                          return (
+                          <div key={i} className="text-xs bg-[#FDFBF7] p-2 rounded-lg flex justify-between items-start">
+                              <div><span className="font-bold text-[#725E77]">{displayName}:</span> {c.text}</div>
+                              {/* 按鈕僅限本人或管理員顯示 */}
+                              {checkPermission(c.uid) && (
+                                <div className="flex gap-1">
+                                    <button onClick={() => handleEditComment(t.id, c, i)} className="text-[#77ABC0] p-1 rounded hover:bg-white"><Pencil size={12}/></button>
+                                    <button onClick={() => handleDeleteComment(t.id, c, i)} className="text-[#BC8F8F] p-1 rounded hover:bg-white"><Trash2 size={12}/></button>
+                                </div>
+                              )}
+                          </div>
+                      )})}
                   </div>
-              )})}
-              <div className="flex gap-2"><input className="w-full bg-[#FDFBF7] text-xs p-2 rounded-lg outline-none text-[#725E77]" placeholder="輸入留言..." value={newComment} onChange={e => setNewComment(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAddComment(t.id)} /><button onClick={() => handleAddComment(t.id)} className="text-[#77ABC0]"><Check size={16}/></button></div>
+                  <div className="flex gap-2"><input className="w-full bg-[#FDFBF7] text-xs p-2 rounded-lg outline-none text-[#725E77]" placeholder="輸入留言..." value={newComment} onChange={e => setNewComment(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAddComment(t.id)} /><button onClick={() => handleAddComment(t.id)} className="text-[#77ABC0]"><Check size={16}/></button></div>
+                </div>
+              )}
             </div>
-          )}
-        </div>
-      ))}
+          );
+      })}
       <div className="flex gap-2"><input className="flex-1 bg-[#FDFBF7] border border-[#E0E0D9] rounded-xl px-3 text-xs outline-none" placeholder="輸入新歌名..." value={newTrackName} onChange={e => setNewTrackName(e.target.value)} /><button onClick={handleAddTrack} className="px-4 py-3 bg-[#77ABC0]/10 text-[#77ABC0] font-bold text-xs flex items-center justify-center gap-1 border border-dashed border-[#77ABC0]/50 hover:bg-[#77ABC0]/20 rounded-2xl transition"><Plus size={14}/> 新增</button></div>
     </div>
   );
 };
 
-// 🛡️ v3.6 修正：PracticeFeeCalculator 強力防呆
-const PracticeFeeCalculator = ({ session, members = [], settings = {}, role = {}, db }) => { 
-  // Ensure selectedIds is an array
-  const [selectedIds, setSelectedIds] = useState(Array.isArray(session.attendance) ? session.attendance : []); 
+const PracticeFeeCalculator = ({ session, members = [], settings = {}, role = {}, db }) => {
+  const [selectedIds, setSelectedIds] = useState(session.attendance || []); 
   const [hours, setHours] = useState(2);
   const [hasKB, setHasKB] = useState(true);
   
@@ -1084,7 +1152,6 @@ const PracticeFeeCalculator = ({ session, members = [], settings = {}, role = {}
   );
 };
 
-// 🛡️ v3.8 修正：MiscFeeCalculator 加入強力防呆，防止未載入完成時崩潰
 const MiscFeeCalculator = ({ session, members = [], db }) => {
   const [items, setItems] = useState(session.miscExpenses || []); 
   const [newItem, setNewItem] = useState({ item: '', amount: '', payerId: '', splitters: [] });
@@ -1124,13 +1191,11 @@ const MiscFeeCalculator = ({ session, members = [], db }) => {
   );
 };
 
-// 🛡️ v3.5 修正：AlcoholFeeCalculator 真·強力防呆，解決未載入完成時的崩潰
 const AlcoholFeeCalculator = ({ members = [], settings = {} }) => {
   const [amount, setAmount] = useState('');
   const [payerId, setPayerId] = useState('');
   const [splitters, setSplitters] = useState([]);
   
-  // 雙重保險：確保 members 真的是陣列，防止 .map 崩潰
   const safeMembers = Array.isArray(members) ? members : [];
   
   const perPerson = splitters.length > 0 ? Math.ceil(parseInt(amount || 0) / splitters.length) : 0;
@@ -1142,7 +1207,6 @@ const AlcoholFeeCalculator = ({ members = [], settings = {} }) => {
 
   const copyResult = () => {
     if (!amount || !payerId || splitters.length === 0) return alert("請完整填寫資訊");
-    // 🛡️ 修正：資料查找防呆
     const payerName = safeMembers.find(m => m.id === payerId)?.nickname || '未知';
     const text = `🍺 酒水補貨\n----------------\n💰 總金額：$${amount}\n👑 墊付人：${payerName}\n👥 分攤人：${splitters.map(id => (safeMembers.find(m => m.id === id)?.nickname || '未知')).join('、')}\n----------------\n👉 每人應付：$${perPerson}\n給 ${payerName}`;
     if(secureCopy(text)) alert("複製成功！");
