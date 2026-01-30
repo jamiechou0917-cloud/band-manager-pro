@@ -837,4 +837,96 @@ const TrackList = ({ session, db, user, role, members }) => {
   // 修改：儲存留言時，不存 displayName，改存 uid 讓前端即時 render 暱稱
   const handleAddComment = async (trackId) => { if (!newComment.trim()) return; const updatedTracks = tracks.map(t => { if (t.id === trackId) { return { ...t, comments: [...(t.comments || []), { text: newComment, uid: user?.uid, timestamp: Date.now() }] }; } return t; }); await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks }); setNewComment(""); };
   
-  const handleDeleteComment = async (trackId, commentIdx) => { if(!confirm("刪除留言?")) return; const updatedTracks = tracks.map(t => { if (t.id === trackId) { const newComments = [...t.comments]; newComments.splice(commentIdx, 1); return { ...t, comments: newComments }; } return t; }); await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updated
+  const handleDeleteComment = async (trackId, commentIdx) => { if(!confirm("刪除留言?")) return; const updatedTracks = tracks.map(t => { if (t.id === trackId) { const newComments = [...t.comments]; newComments.splice(commentIdx, 1); return { ...t, comments: newComments }; } return t; }); await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks }); };
+  const handleEditComment = async (trackId, commentIdx, newText) => { const updatedTracks = tracks.map(t => { if (t.id === trackId) { const newComments = [...t.comments]; newComments[commentIdx].text = newText; return { ...t, comments: newComments }; } return t; }); await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks }); };
+
+  // 新增：更新連結功能
+  const handleUpdateLink = async (trackId, link) => { const updatedTracks = tracks.map(t => { if (t.id === trackId) { return { ...t, link }; } return t; }); await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks }); };
+
+  // 輔助函式：取得顯示名稱
+  const getDisplayName = (uid) => {
+      const member = members.find(m => m.id === uid); // 先找 id
+      if (member) return member.nickname;
+      const memberByEmail = members.find(m => m.email === user?.email); // 再找 email (雖然這裡只有 uid，但如果資料結構有存 uid 最好)
+      // 由於 comments 以前存的是 { user: "名字" }，為了相容舊資料：
+      return member ? member.nickname : "團員";
+  };
+
+  return (
+    <div className="p-3 space-y-3">
+      {tracks.map(t => (
+        <div key={t.id} className="border border-[#E0E0D9] rounded-2xl overflow-hidden">
+          <div className="bg-[#FAFAF9] p-4 flex justify-between items-center cursor-pointer" onClick={() => setExpandedTrack(expandedTrack === t.id ? null : t.id)}>
+            <div className="flex items-center gap-2 overflow-hidden">
+                <span className="font-bold text-[#725E77] truncate">{t.title}</span>
+                {t.link && <a href={t.link} target="_blank" onClick={e=>e.stopPropagation()} className="text-[#77ABC0] hover:text-[#50656e]"><ExternalLink size={14}/></a>}
+            </div>
+            <ChevronDown size={16} className={`text-[#C5B8BF] ${expandedTrack === t.id ? 'rotate-180' : ''}`}/>
+          </div>
+          {expandedTrack === t.id && (
+            <div className="p-4 bg-white border-t border-[#E0E0D9] space-y-3">
+              {/* 連結編輯區 */}
+              <div className="flex items-center gap-2 bg-[#F0F4F5] p-2 rounded-lg">
+                  <LinkIcon size={14} className="text-[#C5B8BF]"/>
+                  <input 
+                    className="bg-transparent text-xs w-full outline-none text-[#725E77]" 
+                    placeholder="貼上音檔/影片連結 (Drive/YouTube)" 
+                    value={t.link || ''}
+                    onChange={(e) => handleUpdateLink(t.id, e.target.value)}
+                  />
+              </div>
+
+              {(t.comments || []).map((c, i) => {
+                  // 相容舊資料：如果有 c.uid 就查暱稱，否則用舊的 c.user
+                  const displayName = c.uid ? (members.find(m => m.id === c.uid)?.nickname || '團員') : c.user;
+                  return (
+                  <div key={i} className="text-xs bg-[#FDFBF7] p-2 rounded-lg flex justify-between items-start group">
+                      <div><span className="font-bold text-[#725E77]">{displayName}:</span> {c.text}</div>
+                      {(c.uid === user?.uid || role.admin) && (
+                          <div className="flex gap-1"><button onClick={() => { const val = prompt("編輯留言", c.text); if(val) handleEditComment(t.id, i, val); }} className="text-[#77ABC0] opacity-0 group-hover:opacity-100"><Pencil size={12}/></button><button onClick={() => handleDeleteComment(t.id, i)} className="text-[#BC8F8F] opacity-0 group-hover:opacity-100"><Trash2 size={12}/></button></div>
+                      )}
+                  </div>
+              )})}
+              <div className="flex gap-2"><input className="w-full bg-[#FDFBF7] text-xs p-2 rounded-lg outline-none text-[#725E77]" placeholder="輸入留言..." value={newComment} onChange={e => setNewComment(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAddComment(t.id)} /><button onClick={() => handleAddComment(t.id)} className="text-[#77ABC0]"><Check size={16}/></button></div>
+            </div>
+          )}
+        </div>
+      ))}
+      <div className="flex gap-2"><input className="flex-1 bg-[#FDFBF7] border border-[#E0E0D9] rounded-xl px-3 text-xs outline-none" placeholder="輸入新歌名..." value={newTrackName} onChange={e => setNewTrackName(e.target.value)} /><button onClick={handleAddTrack} className="px-4 py-3 bg-[#77ABC0]/10 text-[#77ABC0] font-bold text-xs flex items-center justify-center gap-1 border border-dashed border-[#77ABC0]/50 hover:bg-[#77ABC0]/20 rounded-2xl transition"><Plus size={14}/> 新增</button></div>
+    </div>
+  );
+};
+
+// --- PracticeFeeCalculator ---
+const PracticeFeeCalculator = ({ session, members, settings, role, db }) => {
+  const [selectedIds, setSelectedIds] = useState(session.attendance || []); 
+  const [hours, setHours] = useState(2);
+  const [hasKB, setHasKB] = useState(true);
+  // 修改：預設帳號改為國泰世華，但優先讀取 settings 中的值 (如果有的話)
+  const defaultBank = "(013)國泰世華銀行 帳號：699514620885";
+  const [bankAccount, setBankAccount] = useState(settings?.studioBankAccount || defaultBank);
+  const [editingBank, setEditingBank] = useState(false);
+  
+  const total = (hours * (settings?.studioRate || 350)) + (hasKB ? (settings?.kbRate || 200) : 0);
+  const perPerson = selectedIds.length > 0 ? Math.ceil(total / selectedIds.length) : 0;
+  
+  const handleUpdateBank = async () => { if(!db) return; await updateDoc(getDocRef(db, 'general', 'info'), { settings: { ...settings, studioBankAccount: bankAccount } }); setEditingBank(false); };
+  const copyText = () => { const names = selectedIds.map(id => (members.find(m => m.id === id)?.nickname || '未知')).join('、'); const text = `📅 ${session.date} 練團費用\n----------------\n⏱️ 時數：${hours}hr\n🎹 KB租借：${hasKB?'有':'無'}\n👥 分攤人：${names}\n----------------\n💰 總金額：$${total}\n👉 每人應付：$${perPerson}\n\n匯款帳號：\n${bankAccount}`; if(secureCopy(text)) alert("複製成功！"); };
+
+  return (
+    <div className="p-4 space-y-5">
+      <div className="bg-[#F0F4F5] p-4 rounded-2xl text-center border border-[#A8D8E2]/30"><div className="text-3xl font-black text-[#77ABC0] mb-1">${total}</div><div className="text-xs font-bold text-[#6E7F9B]">每人 <span className="text-lg text-[#725E77]">${perPerson}</span></div></div>
+      <div className="space-y-3">
+          <div className="flex gap-2">{[2, 3].map(h => <button key={h} onClick={() => setHours(h)} className={`flex-1 py-2 rounded-xl text-xs font-bold ${hours === h ? 'bg-[#725E77] text-white' : 'bg-[#FDFBF7] text-[#C5B8BF]'}`}>{h}hr</button>)}<button onClick={() => setHasKB(!hasKB)} className={`flex-1 py-2 rounded-xl text-xs font-bold ${hasKB ? 'bg-[#77ABC0] text-white' : 'bg-[#FDFBF7] text-[#C5B8BF]'}`}>KB {hasKB?'+':'-'}</button></div>
+          <div><label className="text-[10px] font-bold text-[#C5B8BF] mb-2 block uppercase">出席確認 (連動日誌設定)</label><div className="flex flex-wrap gap-2">{members.map(m => (<button key={m.id} onClick={() => setSelectedIds(prev => prev.includes(m.id) ? prev.filter(i => i!==m.id) : [...prev, m.id])} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition ${selectedIds.includes(m.id) ? 'bg-[#A8D8E2]/20 border-[#A8D8E2] text-[#5F8794]' : 'bg-white border-[#E0E0D9] text-[#C5B8BF]'}`}>{m.nickname}</button>))}</div></div>
+          <div className="flex gap-2 items-center">
+            <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-xs text-[#725E77] border border-transparent focus:border-[#77ABC0] outline-none" value={bankAccount} onChange={(e) => setBankAccount(e.target.value)} disabled={!editingBank} />
+            {/* 權限控制：只有管理員或財務長可以編輯帳號 */}
+            {(role.admin || role.finance) && !editingBank && <button onClick={()=>setEditingBank(true)}><Pencil size={16} className="text-[#C5B8BF]"/></button>}
+            {editingBank && <button onClick={handleUpdateBank}><Check size={16} className="text-[#77ABC0]"/></button>}
+          </div>
+      </div>
+      <button onClick={copyText} className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition bg-[#77ABC0] text-white`}>{<Copy size={16}/>} 複製請款文</button>
+    </div>
+  );
+};
