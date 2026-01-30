@@ -816,6 +816,11 @@ const TrackList = ({ session, db, user, role, members }) => {
   const [expandedTrack, setExpandedTrack] = useState(null);
   const [newTrackName, setNewTrackName] = useState("");
   const [newComment, setNewComment] = useState("");
+  
+  // 新增：處理連結編輯的狀態
+  const [editingLinkId, setEditingLinkId] = useState(null);
+  const [tempLinkVal, setTempLinkVal] = useState("");
+
   // 🛡️ 強力防呆：確保 session.tracks 是陣列
   const tracks = Array.isArray(session.tracks) ? session.tracks : [];
   const auth = getAuth();
@@ -829,8 +834,42 @@ const TrackList = ({ session, db, user, role, members }) => {
   const handleDeleteComment = async (trackId, commentIdx) => { if(!confirm("刪除留言?")) return; const updatedTracks = tracks.map(t => { if (t.id === trackId) { const newComments = [...t.comments]; newComments.splice(commentIdx, 1); return { ...t, comments: newComments }; } return t; }); await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks }); };
   const handleEditComment = async (trackId, commentIdx, newText) => { const updatedTracks = tracks.map(t => { if (t.id === trackId) { const newComments = [...t.comments]; newComments[commentIdx].text = newText; return { ...t, comments: newComments }; } return t; }); await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks }); };
 
-  // 新增：更新連結功能
-  const handleUpdateLink = async (trackId, link) => { const updatedTracks = tracks.map(t => { if (t.id === trackId) { return { ...t, link }; } return t; }); await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks }); };
+  // 新增：更新連結功能 (後端寫入)
+  const handleUpdateLink = async (trackId, link) => { 
+      const updatedTracks = tracks.map(t => { if (t.id === trackId) { return { ...t, link }; } return t; }); 
+      await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks }); 
+  };
+
+  // 連結編輯相關操作
+  const startEditLink = (trackId, currentLink) => {
+      setEditingLinkId(trackId);
+      setTempLinkVal(currentLink || "");
+  };
+
+  const saveLink = async (trackId) => {
+      await handleUpdateLink(trackId, tempLinkVal);
+      setEditingLinkId(null);
+  };
+
+  const cancelEditLink = () => {
+      setEditingLinkId(null);
+      setTempLinkVal("");
+  };
+
+  const deleteLink = async (trackId) => {
+      if(confirm("確定要移除這個連結嗎？")) {
+          await handleUpdateLink(trackId, "");
+      }
+  };
+
+  // 輔助函式：取得顯示名稱
+  const getDisplayName = (uid) => {
+      const member = members.find(m => m.id === uid); // 先找 id
+      if (member) return member.nickname;
+      const memberByEmail = members.find(m => m.email === user?.email); // 再找 email (雖然這裡只有 uid，但如果資料結構有存 uid 最好)
+      // 由於 comments 以前存的是 { user: "名字" }，為了相容舊資料：
+      return member ? member.nickname : "團員";
+  };
 
   return (
     <div className="p-3 space-y-3">
@@ -839,22 +878,44 @@ const TrackList = ({ session, db, user, role, members }) => {
           <div className="bg-[#FAFAF9] p-4 flex justify-between items-center cursor-pointer" onClick={() => setExpandedTrack(expandedTrack === t.id ? null : t.id)}>
             <div className="flex items-center gap-2 overflow-hidden">
                 <span className="font-bold text-[#725E77] truncate">{t.title}</span>
-                {t.link && <a href={t.link} target="_blank" onClick={e=>e.stopPropagation()} className="text-[#77ABC0] hover:text-[#50656e]"><ExternalLink size={14}/></a>}
+                {/* 顯示外部連結圖示，方便未展開時直接點 */}
+                {t.link && <a href={t.link} target="_blank" onClick={e=>e.stopPropagation()} className="text-[#77ABC0] hover:text-[#50656e] bg-white p-1 rounded-full shadow-sm"><ExternalLink size={14}/></a>}
             </div>
             <ChevronDown size={16} className={`text-[#C5B8BF] ${expandedTrack === t.id ? 'rotate-180' : ''}`}/>
           </div>
           {expandedTrack === t.id && (
             <div className="p-4 bg-white border-t border-[#E0E0D9] space-y-3">
-              {/* 連結編輯區 */}
-              <div className="flex items-center gap-2 bg-[#F0F4F5] p-2 rounded-lg">
-                  <LinkIcon size={14} className="text-[#C5B8BF]"/>
-                  <input 
-                    className="bg-transparent text-xs w-full outline-none text-[#725E77]" 
-                    placeholder="貼上音檔/影片連結 (Drive/YouTube)" 
-                    value={t.link || ''}
-                    onChange={(e) => handleUpdateLink(t.id, e.target.value)}
-                  />
-              </div>
+              {/* 改良版連結編輯區：顯示模式 vs 編輯模式 */}
+              {editingLinkId === t.id ? (
+                  <div className="flex gap-2 items-center bg-[#F0F4F5] p-2 rounded-lg border border-[#77ABC0]">
+                      <LinkIcon size={14} className="text-[#77ABC0] shrink-0"/>
+                      <input 
+                        className="bg-transparent text-xs w-full outline-none text-[#725E77]" 
+                        placeholder="貼上連結 (Drive/YouTube)..." 
+                        value={tempLinkVal}
+                        autoFocus
+                        onChange={(e) => setTempLinkVal(e.target.value)}
+                        onKeyDown={(e) => { if(e.key === 'Enter') saveLink(t.id); else if(e.key === 'Escape') cancelEditLink(); }}
+                      />
+                      <button onClick={() => saveLink(t.id)} className="text-[#77ABC0] hover:bg-white p-1 rounded transition"><Check size={16}/></button>
+                      <button onClick={cancelEditLink} className="text-[#BC8F8F] hover:bg-white p-1 rounded transition"><X size={16}/></button>
+                  </div>
+              ) : (
+                  <div className="flex items-center justify-between bg-[#F0F4F5] p-2 rounded-lg group/link">
+                      <div className="flex items-center gap-2 overflow-hidden flex-1">
+                          <LinkIcon size={14} className="text-[#C5B8BF] shrink-0"/>
+                          {t.link ? (
+                              <a href={t.link} target="_blank" className="text-xs text-[#77ABC0] underline truncate block hover:text-[#50656e]">{t.link}</a>
+                          ) : (
+                              <span className="text-xs text-[#C5B8BF] italic">尚未新增連結</span>
+                          )}
+                      </div>
+                      <div className="flex gap-1 shrink-0 ml-2">
+                          <button onClick={() => startEditLink(t.id, t.link)} className="text-[#725E77] hover:bg-white p-1.5 rounded transition bg-white/50 shadow-sm" title="編輯連結"><Pencil size={12}/></button>
+                          {t.link && <button onClick={() => deleteLink(t.id)} className="text-[#BC8F8F] hover:bg-white p-1.5 rounded transition bg-white/50 shadow-sm" title="移除連結"><Trash2 size={12}/></button>}
+                      </div>
+                  </div>
+              )}
 
               {(t.comments || []).map((c, i) => {
                   // 相容舊資料：如果有 c.uid 就查暱稱，否則用舊的 c.user
