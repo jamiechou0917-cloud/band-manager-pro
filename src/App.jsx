@@ -175,7 +175,8 @@ const DEFAULT_GENERAL_DATA = {
     miscBankAccount: '(待設定)',
     alcoholTypes: ['紅酒', '白酒', '清酒', '氣泡酒', '啤酒', '威士忌', '其他']
   },
-  practices: [] 
+  practices: [],
+  prankMessage: "👻 抓到了！"
 };
 
 // --- Main App ---
@@ -384,7 +385,7 @@ const App = () => {
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
             <div className="bg-white w-full max-w-xs p-6 rounded-[32px] text-center shadow-2xl animate-in zoom-in-95 duration-200 relative overflow-hidden">
               <div className="w-20 h-20 bg-[#F1CEBA]/20 text-[#F1CEBA] rounded-full flex items-center justify-center mx-auto mb-4"><Ghost size={40} className="animate-bounce" /></div>
-              <h3 className="text-xl font-black text-[#725E77] mb-2">👻 抓到了！</h3>
+              <h3 className="text-xl font-black text-[#725E77] mb-2">{generalData?.prankMessage || "👻 抓到了！"}</h3>
               <button onClick={() => setShowPrankModal(false)} className="w-full py-3 rounded-xl bg-[#77ABC0] text-white font-bold shadow-lg active:scale-95 transition">好啦我知道了</button>
             </div>
           </div>
@@ -1033,14 +1034,21 @@ const AdminDashboard = ({ members = [], logs = [], generalData = {}, db }) => {
   const [tab, setTab] = useState('members');
   // 🛡️ 修正 3：渲染地雷修復 - 初始化為空陣列，但加入 useEffect 監聽資料更新
   const [alcoholTypes, setAlcoholTypes] = useState([]);
-  
+  const [prankMessage, setPrankMessage] = useState(""); // New state
+
   useEffect(() => {
     if (generalData?.settings?.alcoholTypes && Array.isArray(generalData.settings.alcoholTypes)) {
       setAlcoholTypes(generalData.settings.alcoholTypes);
     }
+    // New logic for prankMessage
+    if (generalData?.prankMessage) {
+        setPrankMessage(generalData.prankMessage);
+    } else {
+        setPrankMessage("👻 抓到了！"); // Default
+    }
   }, [generalData]);
 
-  const handleUpdateSettings = async () => { await updateDoc(getDocRef(db, 'general', 'info'), { settings: { ...generalData.settings, alcoholTypes } }); alert("設定已更新"); };
+  const handleUpdateSettings = async () => { await updateDoc(getDocRef(db, 'general', 'info'), { settings: { ...generalData.settings, alcoholTypes }, prankMessage }); alert("設定已更新"); };
   const handleExport = () => { const dataToExport = tab === 'members' ? members : logs; const formattedData = dataToExport.map(item => { if (tab === 'members') return { 暱稱: item.nickname, 本名: item.realName, 樂器: item.instrument, 生日: item.birthday, Email: item.email || '' }; else { const attendeesCount = members.filter(m => m.attendance?.includes(item.date)).length; const trackDetails = item.tracks?.map(t => `${t.title} ${t.comments?.length ? '(' + t.comments.map(c => c.user + ':' + c.text).join('/') + ')' : ''}`).join('; '); return { 日期: item.date, 地點: item.location, 出席人數: attendeesCount, 練習曲目: trackDetails, 備註: item.funNotes }; } }); exportToCSV(formattedData, `Band_${tab}_export.csv`); };
   const handleDelete = async (collectionName, id) => { if (confirm("⚠️ 警告：這將永久刪除此筆資料！確定嗎？")) await deleteDoc(getDocRef(db, collectionName, id)); };
   
@@ -1053,7 +1061,15 @@ const AdminDashboard = ({ members = [], logs = [], generalData = {}, db }) => {
       <div className="bg-white p-5 rounded-[32px] border border-[#E0E0D9] shadow-sm">
         <h2 className="text-xl font-black text-[#725E77] flex items-center gap-2 mb-4"><Database size={24}/> 後台管理</h2>
         <div className="flex gap-2 mb-4"><button onClick={() => setTab('members')} className={`px-4 py-2 rounded-xl text-xs font-bold ${tab === 'members' ? 'bg-[#77ABC0] text-white' : 'bg-[#F0F4F5]'}`}>成員</button><button onClick={() => setTab('logs')} className={`px-4 py-2 rounded-xl text-xs font-bold ${tab === 'logs' ? 'bg-[#77ABC0] text-white' : 'bg-[#F0F4F5]'}`}>紀錄</button><button onClick={() => setTab('settings')} className={`px-4 py-2 rounded-xl text-xs font-bold ${tab === 'settings' ? 'bg-[#77ABC0] text-white' : 'bg-[#F0F4F5]'}`}>設定</button></div>
-        {tab === 'settings' ? (<div className="space-y-3"><h3 className="font-bold text-[#725E77]">酒櫃分類</h3><textarea className="w-full h-24 p-3 bg-[#FDFBF7] rounded-xl text-xs" value={alcoholTypes.join(',')} onChange={e => setAlcoholTypes(e.target.value.split(','))} /><button onClick={handleUpdateSettings} className="w-full py-2 bg-[#77ABC0] text-white rounded-xl text-xs font-bold">儲存設定</button></div>) : (<button onClick={handleExport} className="w-full py-3 bg-[#E8F1E9] text-[#5F7A61] rounded-xl text-xs font-bold flex items-center justify-center gap-2"><Download size={16}/> 匯出 CSV</button>)}
+        {tab === 'settings' ? (
+            <div className="space-y-3">
+                <h3 className="font-bold text-[#725E77]">酒櫃分類</h3>
+                <textarea className="w-full h-24 p-3 bg-[#FDFBF7] rounded-xl text-xs" value={alcoholTypes.join(',')} onChange={e => setAlcoholTypes(e.target.value.split(','))} />
+                <h3 className="font-bold text-[#725E77]">惡作劇訊息</h3>
+                <input className="w-full p-3 bg-[#FDFBF7] rounded-xl text-xs" value={prankMessage} onChange={e => setPrankMessage(e.target.value)} />
+                <button onClick={handleUpdateSettings} className="w-full py-2 bg-[#77ABC0] text-white rounded-xl text-xs font-bold">儲存設定</button>
+            </div>
+        ) : (<button onClick={handleExport} className="w-full py-3 bg-[#E8F1E9] text-[#5F7A61] rounded-xl text-xs font-bold flex items-center justify-center gap-2"><Download size={16}/> 匯出 CSV</button>)}
       </div>
       {tab !== 'settings' && (<div className="bg-white rounded-[24px] border border-[#E0E0D9] overflow-hidden p-4"><table className="w-full text-left text-xs"><thead><tr><th className="p-2">名稱/日期</th><th className="p-2">詳情</th><th className="p-2 text-right">操作</th></tr></thead><tbody>{(tab === 'members' ? safeMembers : safeLogs).map(i => (<tr key={i.id} className="border-t"><td className="p-2 font-bold">{tab === 'members' ? i.nickname : i.date}</td><td className="p-2 text-slate-500">{tab === 'members' ? i.instrument : i.location}</td><td className="p-2 text-right"><button onClick={() => handleDelete(tab === 'members' ? 'members' : 'logs', i.id)} className="text-[#BC8F8F]"><Trash2 size={14}/></button></td></tr>))}</tbody></table></div>)}
     </div>
