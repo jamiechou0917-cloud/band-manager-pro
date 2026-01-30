@@ -1048,7 +1048,47 @@ const PracticeFeeCalculator = ({ session, members = [], settings = {}, role = {}
   );
 };
 
-// 🛡️ v3.7 修正：AlcoholFeeCalculator 真·強力防呆，解決未載入完成時的崩潰
+// 🛡️ v3.8 修正：MiscFeeCalculator 加入強力防呆，防止未載入完成時崩潰
+const MiscFeeCalculator = ({ session, members = [], db }) => {
+  const [items, setItems] = useState(session.miscExpenses || []); 
+  const [newItem, setNewItem] = useState({ item: '', amount: '', payerId: '', splitters: [] });
+  
+  // 雙重保險：確保 members 真的是陣列
+  const safeMembers = Array.isArray(members) ? members : [];
+
+  const handleUpdate = async (newItems) => { setItems(newItems); if (db) await updateDoc(getDocRef(db, 'logs', session.id), { miscExpenses: newItems }); };
+  const handleAdd = () => { if(newItem.item) handleUpdate([...items, { ...newItem, id: Date.now(), isSettled: false }]); };
+  const handleToggleSettle = (idx) => { const newItems = [...items]; newItems[idx].isSettled = !newItems[idx].isSettled; handleUpdate(newItems); };
+  const handleDelete = (idx) => { if (confirm("刪除此筆雜支？")) handleUpdate(items.filter((_, i) => i !== idx)); };
+  const toggleSplitter = (memberId) => { const current = newItem.splitters || []; if (current.includes(memberId)) setNewItem({...newItem, splitters: current.filter(id => id !== memberId)}); else setNewItem({...newItem, splitters: [...current, memberId]}); };
+  
+  const calculateDebt = () => {
+      const balance = {}; items.filter(i => !i.isSettled).forEach(item => { const splitAmount = item.amount / (item.splitters?.length || 1); balance[item.payerId] = (balance[item.payerId] || 0) + parseInt(item.amount); (item.splitters || []).forEach(sid => { balance[sid] = (balance[sid] || 0) - splitAmount; }); });
+      const result = []; Object.keys(balance).forEach(id => { const net = Math.round(balance[id]); if (net < 0) result.push(`${(safeMembers.find(m => m.id === id)?.nickname || '未知')} 應付 $${Math.abs(net)}`); else if (net > 0) result.push(`${(safeMembers.find(m => m.id === id)?.nickname || '未知')} 應收 $${net}`); }); return result;
+  };
+  const copyText = () => { let text = `🍱 ${session.date} 雜支明細\n----------------\n`; items.filter(i => !i.isSettled).forEach(i => { text += `🔹 ${i.item} ($${i.amount}) - 墊付:${(safeMembers.find(m=>m.id===i.payerId)?.nickname || '未知')}\n`; }); secureCopy(text); };
+
+  return (
+    <div className="p-4 space-y-6">
+      <div className="bg-[#FDFBF7] p-4 rounded-2xl border border-[#E0E0D9] space-y-3">
+         <div className="flex gap-2"><input className="flex-1 bg-white p-2 rounded-xl text-xs outline-none" placeholder="項目" value={newItem.item} onChange={e=>setNewItem({...newItem, item: e.target.value})}/><input className="w-20 bg-white p-2 rounded-xl text-xs outline-none" type="number" placeholder="$" value={newItem.amount} onChange={e=>setNewItem({...newItem, amount: e.target.value})}/></div>
+         <div className="flex items-center gap-2 overflow-x-auto pb-1"><span className="text-[10px] font-bold text-[#C5B8BF] shrink-0">墊付:</span>{safeMembers.map(m => (<button key={m.id} onClick={()=>setNewItem({...newItem, payerId: m.id})} className={`px-2 py-1 rounded-lg text-[10px] font-bold border shrink-0 ${newItem.payerId === m.id ? 'bg-[#F1CEBA] text-white border-[#F1CEBA]' : 'bg-white text-[#C5B8BF] border-[#E0E0D9]'}`}>{m.nickname}</button>))}</div>
+         <div className="flex items-center gap-2 overflow-x-auto pb-1"><span className="text-[10px] font-bold text-[#C5B8BF] shrink-0">分攤:</span>{safeMembers.map(m => (<button key={m.id} onClick={()=>toggleSplitter(m.id)} className={`px-2 py-1 rounded-lg text-[10px] font-bold border shrink-0 ${newItem.splitters?.includes(m.id) ? 'bg-[#725E77] text-white border-[#725E77]' : 'bg-white text-[#C5B8BF] border-[#E0E0D9]'}`}>{m.nickname}</button>))}</div>
+         <button onClick={handleAdd} className="w-full bg-[#725E77] text-white text-xs font-bold py-2 rounded-xl">加入清單</button>
+      </div>
+      <div className="bg-[#E8F1E9] p-3 rounded-xl border border-[#CFE3D1]"><h4 className="text-xs font-bold text-[#5F7A61] mb-2 flex items-center gap-1"><Wallet size={12}/> 結算建議 (未結清項目)</h4><div className="space-y-1">{calculateDebt().map((res, i) => (<div key={i} className="text-xs text-[#5F7A61]">{res}</div>))}{calculateDebt().length === 0 && <div className="text-[10px] text-[#A6B5A7]">無待結算項目</div>}</div></div>
+      <div className="space-y-2">{items.map((it, idx) => (
+         <div key={idx} className={`bg-white border border-[#E0E0D9] p-3 rounded-xl flex justify-between items-center text-xs ${it.isSettled ? 'opacity-50' : ''}`}>
+             <div><div className={`font-bold text-[#725E77] ${it.isSettled ? 'line-through' : ''}`}>{it.item} <span className="text-[#F1CEBA]">${it.amount}</span></div><div className="text-[#C5B8BF]">墊付: {(safeMembers.find(m=>m.id===it.payerId)?.nickname || '未知')}</div></div>
+             <div className="flex gap-2"><button onClick={() => handleToggleSettle(idx)} className={it.isSettled ? "text-green-500" : "text-[#C5B8BF]"} title="結清請打勾"><CheckSquare size={16}/></button><button onClick={() => handleDelete(idx)} className="text-[#BC8F8F]"><Trash2 size={16}/></button></div>
+         </div>
+      ))}</div>
+      <button onClick={copyText} className="w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 bg-[#8DA399] text-white"><Copy size={16}/> 複製未結清明細</button>
+    </div>
+  );
+};
+
+// 🛡️ v3.5 修正：AlcoholFeeCalculator 真·強力防呆，解決未載入完成時的崩潰
 const AlcoholFeeCalculator = ({ members = [], settings = {} }) => {
   const [amount, setAmount] = useState('');
   const [payerId, setPayerId] = useState('');
