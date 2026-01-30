@@ -25,7 +25,7 @@ import {
   Ghost, Pencil, Trash2, Lock, Save, MinusCircle, FilePlus, AlertTriangle,
   Database, Download, Filter, Search, Clock, CheckSquare,
   User, StickyNote, ArrowRight, Calculator, Link as LinkIcon, Youtube,
-  BookOpen, FileJson, UploadCloud, Library, Share
+  BookOpen, FileJson, UploadCloud, Library, Share, ArrowUp, ArrowDown
 } from 'lucide-react';
 
 // ==========================================
@@ -290,7 +290,13 @@ const App = () => {
   // Firestore
   useEffect(() => {
     if (!db || !user) return;
-    const unsubMembers = onSnapshot(getCollectionRef(db, 'members'), (snap) => setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const unsubMembers = onSnapshot(getCollectionRef(db, 'members'), (snap) => {
+        const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        // 修正：依據 order 欄位排序，確保順序可控
+        data.sort((a, b) => (a.order || 0) - (b.order || 0));
+        setMembers(data);
+        setMembersLoaded(true);
+    }, (e) => console.warn(e));
     const unsubLogs = onSnapshot(getCollectionRef(db, 'logs'), (snap) => setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => new Date(b.date) - new Date(a.date))));
     const unsubAlcohol = onSnapshot(getCollectionRef(db, 'alcohol'), (snap) => setAlcohols(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubSongs = onSnapshot(getCollectionRef(db, 'songs'), (snap) => setSongs(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
@@ -308,7 +314,6 @@ const App = () => {
         }
         setGeneralData(data);
       } else {
-        // ⚠️ 關鍵修復：唯讀初始化，不自動寫入，防止覆蓋資料
         console.log("No general data found, using default for display.");
         setGeneralData(DEFAULT_GENERAL_DATA);
       }
@@ -417,7 +422,7 @@ const App = () => {
           <div className="flex items-center gap-3">
             {showImage ? <img src={BAND_LOGO_BASE64} alt="Logo" className="w-9 h-9 rounded-xl object-contain bg-white shadow-sm" onError={() => setImgError(true)} /> : <BandLogo />}
             <span className="font-bold text-lg tracking-wide text-[#77ABC0]">{BAND_NAME}</span>
-            <span className="text-[9px] bg-[#E8F1E9] text-[#5F7A61] px-1.5 py-0.5 rounded-full font-bold ml-1">v3.7</span>
+            <span className="text-[9px] bg-[#E8F1E9] text-[#5F7A61] px-1.5 py-0.5 rounded-full font-bold ml-1">v4.0</span>
           </div>
           <div className="flex items-center gap-2">
             {role.admin && <span className="bg-rose-100 text-rose-600 text-[10px] px-2 py-0.5 rounded-full font-bold">Admin</span>}
@@ -510,6 +515,25 @@ const DashboardView = ({ members = [], generalData = {}, alcoholCount = 0, db, r
   const handleSaveMember = async (data) => { if (!db) return; data.id ? await updateDoc(getDocRef(db, 'members', data.id), data) : await addDoc(getCollectionRef(db, 'members'), data); setEditingMember(null); };
   const handleDeleteMember = async (id) => { if (confirm("確定要刪除這位團員嗎？")) { await deleteDoc(getDocRef(db, 'members', id)); } };
   
+  // 修正：新增排序功能 (moveMember)
+  const moveMember = async (index, direction) => {
+      if (!role.admin) return;
+      const newMembers = [...members];
+      const targetIndex = index + direction;
+      if (targetIndex < 0 || targetIndex >= newMembers.length) return;
+      
+      // Swap elements
+      [newMembers[index], newMembers[targetIndex]] = [newMembers[targetIndex], newMembers[index]];
+      
+      // Batch update order fields
+      const batch = writeBatch(db);
+      newMembers.forEach((m, idx) => {
+          const ref = getDocRef(db, 'members', m.id);
+          batch.update(ref, { order: idx });
+      });
+      await batch.commit();
+  };
+
   const generateCalendarUrl = (p) => {
     if (!p || !p.date) return "#";
     const startDate = new Date(p.date);
@@ -654,14 +678,24 @@ const DashboardView = ({ members = [], generalData = {}, alcoholCount = 0, db, r
       <div>
         <div className="flex items-center justify-between px-1 mb-2"><h3 className="font-bold text-xl text-[#725E77]">本月練團點名</h3>{role.admin && <button onClick={() => setEditingMember({})} className="text-xs font-bold text-[#77ABC0] bg-[#F0F4F5] px-3 py-1.5 rounded-lg flex items-center gap-1"><Plus size={14}/> 新增團員</button>}</div>
         <div className="grid grid-cols-1 gap-3">
-          {members.map(m => {
+          {members.map((m, index) => {
             const style = getMemberStyle(m.nickname || m.realName);
             return (
             <div key={m.id} onClick={() => setExpandedMember(expandedMember === m.id ? null : m.id)} className={`bg-white p-4 rounded-2xl border shadow-sm transition-all cursor-pointer ${expandedMember === m.id ? 'border-[#CBABCA] ring-1 ring-[#CBABCA]/30' : 'border-[#E0E0D9]'}`}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
+                  <div className="flex flex-col gap-1 mr-2">
+                     {/* 修正：加入上移下移按鈕，僅限管理員操作 */}
+                     {role.admin && (
+                        <>
+                          <button onClick={(e) => { e.stopPropagation(); moveMember(index, -1); }} className="p-0.5 hover:bg-slate-100 rounded text-slate-400"><ArrowUp size={12}/></button>
+                          <button onClick={(e) => { e.stopPropagation(); moveMember(index, 1); }} className="p-0.5 hover:bg-slate-100 rounded text-slate-400"><ArrowDown size={12}/></button>
+                        </>
+                     )}
+                  </div>
+                  {/* 修正：優先顯示 avatarText，若無則顯示暱稱首字 */}
                   <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white font-bold text-lg border-2 border-white shadow-sm overflow-hidden" style={{backgroundColor: style.color}}>
-                    {m.nickname?.[0] || 'M'}
+                    {m.avatarText || m.nickname?.[0] || 'M'}
                   </div>
                   <div>
                     <div className="flex items-center gap-2"><span className="font-bold text-[#725E77] text-lg">{m.nickname}</span>{m.birthday && new Date().getMonth()+1 === parseInt(m.birthday.split('-')[1]) && <span className="bg-[#BC8F8F] text-white text-[10px] px-2 py-0.5 rounded-full font-bold flex items-center gap-1"><Cake size={10} /> 壽星</span>}</div>
@@ -703,6 +737,8 @@ const MemberEditModal = ({ member, onClose, onSave }) => {
         </div>
         <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm border border-[#77ABC0]/30" placeholder="Google Email (權限綁定用)" value={form.email || ''} onChange={e => setForm({...form, email: e.target.value})} />
         <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm" placeholder="頭像網址 (FB/IG圖片連結，選填)" value={form.avatarUrl || ''} onChange={e => setForm({...form, avatarUrl: e.target.value})} />
+        {/* 修正：新增頭像文字編輯欄位 */}
+        <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm" placeholder="頭像文字 (預設為暱稱首字)" value={form.avatarText || ''} onChange={e => setForm({...form, avatarText: e.target.value})} />
         <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm" placeholder="樂器 (Vocal, Bass...)" value={form.instrument || ''} onChange={e => setForm({...form, instrument: e.target.value})} />
         <input type="date" className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm" value={form.birthday || ''} onChange={e => setForm({...form, birthday: e.target.value})} />
         <textarea className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm h-20" placeholder="備註 (僅管理員可見)" value={form.note || ''} onChange={e => setForm({...form, note: e.target.value})} />
