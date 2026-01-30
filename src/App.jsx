@@ -310,7 +310,8 @@ const App = () => {
       case 'alcohol': return <AlcoholManager alcohols={alcohols} members={members} settings={data.settings} db={db} role={role} user={user} />;
       case 'tech': return <TechView songs={songs} db={db} role={role} user={user} />;
       case 'admin': return <AdminDashboard members={members} logs={logs} generalData={data} db={db} />;
-      default: return <DashboardView />;
+      // 🛡️ 致命地雷修復：確保 default case 也回傳完整的 props
+      default: return <DashboardView members={members} generalData={data} alcoholCount={alcohols.length} db={db} role={role} user={user} />;
     }
   };
 
@@ -400,7 +401,8 @@ const NavBtn = ({ id, icon: Icon, label, active, set }) => (
 );
 
 // --- 1. Dashboard ---
-const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) => {
+// 🛡️ 元件級別防呆：使用預設參數 ({ members = [], ... }) 確保內部不會炸裂
+const DashboardView = ({ members = [], generalData = {}, alcoholCount = 0, db, role = {}, user }) => {
   const [editingPractice, setEditingPractice] = useState(false);
   const [practices, setPractices] = useState(generalData.practices || []);
   const [expandedMember, setExpandedMember] = useState(null);
@@ -657,7 +659,7 @@ const MemberEditModal = ({ member, onClose, onSave }) => {
 };
 
 // --- 2. 日誌管理器 ---
-const SessionLogManager = ({ sessions, practices = [], members, settings, db, appId, role, user }) => {
+const SessionLogManager = ({ sessions = [], practices = [], members = [], settings = {}, db, appId, role = {}, user }) => {
   const [activeSessionId, setActiveSessionId] = useState(null);
   // 🛡️ 強力防呆：如果 sessions 是 null，轉為空陣列 []
   const safeSessions = Array.isArray(sessions) ? sessions : [];
@@ -851,7 +853,7 @@ const PracticeFeeCalculator = ({ session, members, settings, role, db }) => {
   const total = (hours * (settings?.studioRate || 350)) + (hasKB ? (settings?.kbRate || 200) : 0);
   const perPerson = selectedIds.length > 0 ? Math.ceil(total / selectedIds.length) : 0;
   const handleUpdateBank = async () => { if(!db) return; await updateDoc(getDocRef(db, 'general', 'info'), { settings: { ...settings, studioBankAccount: bankAccount } }); setEditingBank(false); };
-  const copyText = () => { const names = selectedIds.map(id => members.find(m => m.id === id)?.nickname).join('、'); const text = `📅 ${session.date} 練團費用\n----------------\n⏱️ 時數：${hours}hr\n🎹 KB租借：${hasKB?'有':'無'}\n👥 分攤人：${names}\n----------------\n💰 總金額：$${total}\n👉 每人應付：$${perPerson}\n\n匯款帳號：\n${bankAccount}`; if(secureCopy(text)) alert("複製成功！"); };
+  const copyText = () => { const names = selectedIds.map(id => (members.find(m => m.id === id)?.nickname || '未知')).join('、'); const text = `📅 ${session.date} 練團費用\n----------------\n⏱️ 時數：${hours}hr\n🎹 KB租借：${hasKB?'有':'無'}\n👥 分攤人：${names}\n----------------\n💰 總金額：$${total}\n👉 每人應付：$${perPerson}\n\n匯款帳號：\n${bankAccount}`; if(secureCopy(text)) alert("複製成功！"); };
 
   return (
     <div className="p-4 space-y-5">
@@ -878,9 +880,9 @@ const MiscFeeCalculator = ({ session, members, db }) => {
   
   const calculateDebt = () => {
       const balance = {}; items.filter(i => !i.isSettled).forEach(item => { const splitAmount = item.amount / (item.splitters?.length || 1); balance[item.payerId] = (balance[item.payerId] || 0) + parseInt(item.amount); (item.splitters || []).forEach(sid => { balance[sid] = (balance[sid] || 0) - splitAmount; }); });
-      const result = []; Object.keys(balance).forEach(id => { const net = Math.round(balance[id]); if (net < 0) result.push(`${members.find(m => m.id === id)?.nickname || '未知'} 應付 $${Math.abs(net)}`); else if (net > 0) result.push(`${members.find(m => m.id === id)?.nickname || '未知'} 應收 $${net}`); }); return result;
+      const result = []; Object.keys(balance).forEach(id => { const net = Math.round(balance[id]); if (net < 0) result.push(`${(members.find(m => m.id === id)?.nickname || '未知')} 應付 $${Math.abs(net)}`); else if (net > 0) result.push(`${(members.find(m => m.id === id)?.nickname || '未知')} 應收 $${net}`); }); return result;
   };
-  const copyText = () => { let text = `🍱 ${session.date} 雜支明細\n----------------\n`; items.filter(i => !i.isSettled).forEach(i => { text += `🔹 ${i.item} ($${i.amount}) - 墊付:${members.find(m=>m.id===i.payerId)?.nickname}\n`; }); secureCopy(text); };
+  const copyText = () => { let text = `🍱 ${session.date} 雜支明細\n----------------\n`; items.filter(i => !i.isSettled).forEach(i => { text += `🔹 ${i.item} ($${i.amount}) - 墊付:${(members.find(m=>m.id===i.payerId)?.nickname || '未知')}\n`; }); secureCopy(text); };
 
   return (
     <div className="p-4 space-y-6">
@@ -893,7 +895,7 @@ const MiscFeeCalculator = ({ session, members, db }) => {
       <div className="bg-[#E8F1E9] p-3 rounded-xl border border-[#CFE3D1]"><h4 className="text-xs font-bold text-[#5F7A61] mb-2 flex items-center gap-1"><Wallet size={12}/> 結算建議 (未結清項目)</h4><div className="space-y-1">{calculateDebt().map((res, i) => (<div key={i} className="text-xs text-[#5F7A61]">{res}</div>))}{calculateDebt().length === 0 && <div className="text-[10px] text-[#A6B5A7]">無待結算項目</div>}</div></div>
       <div className="space-y-2">{items.map((it, idx) => (
          <div key={idx} className={`bg-white border border-[#E0E0D9] p-3 rounded-xl flex justify-between items-center text-xs ${it.isSettled ? 'opacity-50' : ''}`}>
-             <div><div className={`font-bold text-[#725E77] ${it.isSettled ? 'line-through' : ''}`}>{it.item} <span className="text-[#F1CEBA]">${it.amount}</span></div><div className="text-[#C5B8BF]">墊付: {members.find(m=>m.id===it.payerId)?.nickname}</div></div>
+             <div><div className={`font-bold text-[#725E77] ${it.isSettled ? 'line-through' : ''}`}>{it.item} <span className="text-[#F1CEBA]">${it.amount}</span></div><div className="text-[#C5B8BF]">墊付: {(members.find(m=>m.id===it.payerId)?.nickname || '未知')}</div></div>
              <div className="flex gap-2"><button onClick={() => handleToggleSettle(idx)} className={it.isSettled ? "text-green-500" : "text-[#C5B8BF]"} title="結清請打勾"><CheckSquare size={16}/></button><button onClick={() => handleDelete(idx)} className="text-[#BC8F8F]"><Trash2 size={16}/></button></div>
          </div>
       ))}</div>
@@ -917,8 +919,8 @@ const AlcoholFeeCalculator = ({ members, settings }) => {
 
   const copyResult = () => {
     if (!amount || !payerId || splitters.length === 0) return alert("請完整填寫資訊");
-    const payerName = members.find(m => m.id === payerId)?.nickname;
-    const text = `🍺 酒水補貨\n----------------\n💰 總金額：$${amount}\n👑 墊付人：${payerName}\n👥 分攤人：${splitters.map(id => members.find(m => m.id === id)?.nickname).join('、')}\n----------------\n👉 每人應付：$${perPerson}\n給 ${payerName}`;
+    const payerName = members.find(m => m.id === payerId)?.nickname || '未知';
+    const text = `🍺 酒水補貨\n----------------\n💰 總金額：$${amount}\n👑 墊付人：${payerName}\n👥 分攤人：${splitters.map(id => (members.find(m => m.id === id)?.nickname || '未知')).join('、')}\n----------------\n👉 每人應付：$${perPerson}\n給 ${payerName}`;
     if(secureCopy(text)) alert("複製成功！");
   };
 
@@ -959,7 +961,7 @@ const AlcoholFeeCalculator = ({ members, settings }) => {
 };
 
 // --- Alcohol Manager ---
-const AlcoholManager = ({ alcohols, members, settings, db, role, user }) => {
+const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role = {}, user }) => {
   const [tab, setTab] = useState('list'); 
   const [newAlcohol, setNewAlcohol] = useState({ name: '', type: '威士忌', level: 100, rating: 5, note: '', comments: [] });
   const [showAdd, setShowAdd] = useState(false);
@@ -1000,7 +1002,7 @@ const AlcoholManager = ({ alcohols, members, settings, db, role, user }) => {
 };
 
 // --- 5. Tech View ---
-const TechView = ({ songs, db, role, user }) => {
+const TechView = ({ songs = [], db, role, user }) => {
   const [viewMode, setViewMode] = useState('list'); 
   const [filter, setFilter] = useState('all'); 
   const [showAdd, setShowAdd] = useState(false);
@@ -1023,7 +1025,7 @@ const TechView = ({ songs, db, role, user }) => {
   );
 };
 
-const AdminDashboard = ({ members, logs, generalData, db }) => {
+const AdminDashboard = ({ members = [], logs = [], generalData = {}, db }) => {
   const [tab, setTab] = useState('members');
   // 🛡️ 強力防呆：確保 alcoholTypes 為陣列
   const [alcoholTypes, setAlcoholTypes] = useState(Array.isArray(generalData.settings?.alcoholTypes) ? generalData.settings.alcoholTypes : []);
