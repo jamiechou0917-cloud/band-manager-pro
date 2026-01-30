@@ -271,8 +271,12 @@ const App = () => {
         if (data.nextPractice && !data.practices) data.practices = [data.nextPractice];
         if (!data.settings?.alcoholTypes) data.settings = { ...DEFAULT_GENERAL_DATA.settings, ...(data.settings || {}) };
         
-        // 🛡️ 防呆：確保 practices 永遠是陣列，防止其他元件當機
-        if (!data.practices) data.practices = [];
+        // 🛡️ 強力防呆：確保 practices 永遠是陣列
+        if (!Array.isArray(data.practices)) data.practices = [];
+        // 🛡️ 強力防呆：確保 alcoholTypes 永遠是陣列
+        if (data.settings && !Array.isArray(data.settings.alcoholTypes)) {
+            data.settings.alcoholTypes = DEFAULT_GENERAL_DATA.settings.alcoholTypes;
+        }
         
         setGeneralData(data);
       } else {
@@ -298,7 +302,7 @@ const App = () => {
   const renderContent = () => {
     const data = generalData || DEFAULT_GENERAL_DATA;
     // 🛡️ 防呆：傳入前再次確保 practices 是陣列
-    const safePractices = data.practices || [];
+    const safePractices = Array.isArray(data.practices) ? data.practices : [];
     
     switch (activeTab) {
       case 'dashboard': return <DashboardView members={members} generalData={data} alcoholCount={alcohols.length} db={db} role={role} user={user} />;
@@ -656,8 +660,8 @@ const SessionLogManager = ({ sessions, practices = [], members, settings, db, ap
   const [activeSessionId, setActiveSessionId] = useState(null);
   const existingDates = sessions.map(s => s.date);
   
-  // 🛡️ 防呆：確保 practices 不為 null
-  const pendingPractices = (practices || []).filter(p => {
+  // 🛡️ 防呆：確保 practices 不為 null 且為陣列
+  const pendingPractices = (Array.isArray(practices) ? practices : []).filter(p => {
       if(!p || !p.date) return false;
       const pDate = p.date.split('T')[0];
       return !existingDates.includes(pDate);
@@ -957,7 +961,7 @@ const AlcoholManager = ({ alcohols, members, settings, db, role, user }) => {
   const [showAdd, setShowAdd] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [customType, setCustomType] = useState("");
-  const alcoholOptions = settings?.alcoholTypes || ['紅酒', '白酒', '清酒', '氣泡酒', '啤酒', '威士忌', '其他'];
+  const alcoholOptions = Array.isArray(settings?.alcoholTypes) ? settings.alcoholTypes : ['紅酒', '白酒', '清酒', '氣泡酒', '啤酒', '威士忌', '其他'];
 
   const handleSave = async () => { if (!newAlcohol.name || !db) return; const finalType = newAlcohol.type === '其他' ? customType : newAlcohol.type; const data = { ...newAlcohol, type: finalType }; if (editingId) await updateDoc(getDocRef(db, 'alcohol', editingId), data); else await addDoc(getCollectionRef(db, 'alcohol'), data); setShowAdd(false); setEditingId(null); setNewAlcohol({ name: '', type: '威士忌', level: 100, rating: 5, note: '', comments: [] }); };
   const handleDelete = async (id) => { if (!db || !confirm("確定刪除此酒品？")) return; await deleteDoc(getDocRef(db, 'alcohol', id)); };
@@ -995,7 +999,7 @@ const TechView = ({ songs, db, role, user }) => {
   const [showAdd, setShowAdd] = useState(false);
   const [newSong, setNewSong] = useState({ title: '', artist: '', link: '', type: 'cover' });
   // 🛡️ 防呆：確保 s.type 存在才執行 toLowerCase
-  const filteredSongs = filter === 'all' ? songs : songs.filter(s => (s.type || 'cover').toLowerCase() === filter);
+  const filteredSongs = filter === 'all' ? songs : songs.filter(s => String(s.type || 'cover').toLowerCase() === filter);
   const handleAdd = async () => { if (!newSong.title || !db) return; await addDoc(getCollectionRef(db, 'songs'), { ...newSong, user: user.displayName, uid: user.uid }); setShowAdd(false); setNewSong({ title: '', artist: '', link: '', type: 'cover' }); };
   const handleDelete = async (id) => { if (!db || !confirm("刪除此資源？")) return; await deleteDoc(getDocRef(db, 'songs', id)); };
 
@@ -1012,7 +1016,8 @@ const TechView = ({ songs, db, role, user }) => {
 
 const AdminDashboard = ({ members, logs, generalData, db }) => {
   const [tab, setTab] = useState('members');
-  const [alcoholTypes, setAlcoholTypes] = useState(generalData.settings?.alcoholTypes || []);
+  // 🛡️ 防呆：確保 alcoholTypes 為陣列
+  const [alcoholTypes, setAlcoholTypes] = useState(Array.isArray(generalData.settings?.alcoholTypes) ? generalData.settings.alcoholTypes : []);
   const handleUpdateSettings = async () => { await updateDoc(getDocRef(db, 'general', 'info'), { settings: { ...generalData.settings, alcoholTypes } }); alert("設定已更新"); };
   const handleExport = () => { const dataToExport = tab === 'members' ? members : logs; const formattedData = dataToExport.map(item => { if (tab === 'members') return { 暱稱: item.nickname, 本名: item.realName, 樂器: item.instrument, 生日: item.birthday, Email: item.email || '' }; else { const attendeesCount = members.filter(m => m.attendance?.includes(item.date)).length; const trackDetails = item.tracks?.map(t => `${t.title} ${t.comments?.length ? '(' + t.comments.map(c => c.user + ':' + c.text).join('/') + ')' : ''}`).join('; '); return { 日期: item.date, 地點: item.location, 出席人數: attendeesCount, 練習曲目: trackDetails, 備註: item.funNotes }; } }); exportToCSV(formattedData, `Band_${tab}_export.csv`); };
   const handleDelete = async (collectionName, id) => { if (confirm("⚠️ 警告：這將永久刪除此筆資料！確定嗎？")) await deleteDoc(getDocRef(db, collectionName, id)); };
