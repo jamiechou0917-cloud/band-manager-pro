@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
+// 修正：移除未使用的 signInWithRedirect, getRedirectResult 避免混淆，確保只用 Popup
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signInWithCustomToken, signOut, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, setDoc, serverTimestamp, writeBatch } from 'firebase/firestore';
 import { 
@@ -13,7 +14,7 @@ import {
   Ghost, Pencil, Trash2, Lock, Save, MinusCircle, FilePlus, AlertTriangle,
   Database, Download, Filter, Search, Clock, CheckSquare,
   User, StickyNote, ArrowRight, Calculator, Link as LinkIcon, Youtube,
-  BookOpen, FileJson, UploadCloud, Library
+  BookOpen, FileJson, UploadCloud, Library, Share
 } from 'lucide-react';
 
 // ==========================================
@@ -195,11 +196,16 @@ const App = () => {
   
   const appId = USER_CONFIG.appId; 
 
+  // 偵測 In-App Browser (加強版偵測)
   useEffect(() => {
     const ua = navigator.userAgent || navigator.vendor || window.opera;
-    if (/Line|FBAN|FBAV|Instagram|Twitter|LinkedIn|SAMSUNG/i.test(ua)) setIsInAppBrowser(true);
+    // 加入 wv (WebView), FBAN (FB Android), FBAV (FB iOS) 等關鍵字
+    if (/Line|FBAN|FBAV|Instagram|Twitter|LinkedIn|SAMSUNG|wv/i.test(ua)) {
+      setIsInAppBrowser(true);
+    }
   }, []);
 
+  // Auth 監聽
   useEffect(() => {
     if (auth) {
       setPersistence(auth, browserLocalPersistence)
@@ -216,6 +222,7 @@ const App = () => {
     } else { setLoading(false); }
   }, []);
 
+  // 權限檢查
   useEffect(() => {
     if (user && membersLoaded) { 
        const normalize = (str) => (str || '').trim().toLowerCase();
@@ -248,6 +255,7 @@ const App = () => {
     }
   }, [user, members, membersLoaded]);
 
+  // Firestore
   useEffect(() => {
     if (!db || !user) return;
     const unsubMembers = onSnapshot(getCollectionRef(db, 'members'), (snap) => setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
@@ -309,20 +317,40 @@ const App = () => {
     }
   };
 
+  // 強化版 In-App Browser 阻擋頁面
   if (isInAppBrowser) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center p-8 bg-slate-100 text-center">
-        <div className="bg-white p-6 rounded-3xl shadow-xl w-full max-w-sm">
-          <div className="text-4xl mb-4">⚠️</div>
-          <h2 className="text-xl font-bold text-slate-800 mb-2">建議更換瀏覽器</h2>
-          <p className="text-sm text-slate-600 mb-6">您目前的瀏覽器可能會導致登入失敗。</p>
+      <div className="min-h-screen flex flex-col items-center justify-center p-8 bg-slate-100 text-center font-sans">
+        <div className="bg-white p-6 rounded-3xl shadow-xl w-full max-w-sm border border-slate-200">
+          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+             <Share className="text-red-500 w-8 h-8" />
+          </div>
+          <h2 className="text-xl font-bold text-slate-800 mb-2">請更換瀏覽器</h2>
+          <p className="text-sm text-slate-600 mb-6 leading-relaxed">
+            Line 或 Facebook 的內建瀏覽器會阻擋 Google 登入功能，導致畫面空白或錯誤。
+          </p>
+          
           <div className="bg-blue-50 p-4 rounded-xl text-left text-sm text-blue-800 mb-6">
-            <p className="font-bold mb-2">請依照以下步驟操作：</p>
-            <ol className="list-decimal pl-4 space-y-1">
-              <li>點擊右上角/右下角的 <span className="font-bold">...</span> 或 <span className="font-bold">分享</span> 圖示</li>
-              <li>選擇 <span className="font-bold">「以預設瀏覽器開啟」</span> (Safari/Chrome)</li>
+            <p className="font-bold mb-2 flex items-center gap-2"><ArrowRight size={16}/> 如何開啟：</p>
+            <ol className="list-decimal pl-4 space-y-1.5">
+              <li>點擊畫面角落的 <strong>...</strong> 或 <strong>分享</strong> 圖示</li>
+              <li>選擇 <strong>以預設瀏覽器開啟</strong> (Safari/Chrome)</li>
             </ol>
           </div>
+
+          <button 
+             onClick={() => {
+                const url = window.location.href;
+                if (navigator.clipboard) {
+                    navigator.clipboard.writeText(url).then(() => alert("連結已複製！請切換到 Safari 或 Chrome 貼上開啟。"));
+                } else {
+                    prompt("請複製下方連結去瀏覽器開啟：", url);
+                }
+             }}
+             className="w-full py-3 bg-[#77ABC0] text-white rounded-xl font-bold shadow-lg active:scale-95 transition flex items-center justify-center gap-2"
+          >
+             <Copy size={16}/> 複製連結
+          </button>
         </div>
       </div>
     );
@@ -350,7 +378,7 @@ const App = () => {
           <div className="flex items-center gap-3">
             {showImage ? <img src={BAND_LOGO_BASE64} alt="Logo" className="w-9 h-9 rounded-xl object-contain bg-white shadow-sm" onError={() => setImgError(true)} /> : <BandLogo />}
             <span className="font-bold text-lg tracking-wide text-[#77ABC0]">{BAND_NAME}</span>
-            <span className="text-[9px] bg-[#E8F1E9] text-[#5F7A61] px-1.5 py-0.5 rounded-full font-bold ml-1">v2.3</span>
+            <span className="text-[9px] bg-[#E8F1E9] text-[#5F7A61] px-1.5 py-0.5 rounded-full font-bold ml-1">v2.4</span>
           </div>
           <div className="flex items-center gap-2">
             {role.admin && <span className="bg-rose-100 text-rose-600 text-[10px] px-2 py-0.5 rounded-full font-bold">Admin</span>}
@@ -644,12 +672,12 @@ const MemberEditModal = ({ member, onClose, onSave }) => {
 const SessionLogManager = ({ sessions = [], practices = [], members = [], settings = {}, db, appId, role = {}, user }) => {
   const [activeSessionId, setActiveSessionId] = useState(null);
   const safeSessions = Array.isArray(sessions) ? sessions : [];
+  const existingDates = safeSessions.map(s => s.date);
   
   const pendingPractices = (Array.isArray(practices) ? practices : []).filter(p => {
       if(!p || !p.date) return false;
       const dateStr = String(p.date); 
       const pDate = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr; 
-      const existingDates = safeSessions.map(s => s.date);
       return !existingDates.includes(pDate);
   }).sort((a,b) => new Date(a.date) - new Date(b.date));
 
@@ -1026,11 +1054,14 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
       setNewCommentMap({ ...newCommentMap, [id]: '' });
   };
 
+  const checkPermission = (commentUid) => {
+      if (user?.uid === commentUid || role.admin) return true;
+      alert("只能修改自己的心得喔！");
+      return false;
+  };
+
   const handleDeleteComment = async (alcoholId, comment, commentIdx) => { 
-      if (comment.uid !== user?.uid && !role.admin) {
-        alert("只能修改自己的心得喔！");
-        return;
-      }
+      if (!checkPermission(comment.uid)) return;
       if(!confirm("刪除留言？")) return; 
       const alcohol = alcohols.find(a => a.id === alcoholId);
       const newComments = [...(alcohol.comments || [])]; 
@@ -1039,10 +1070,7 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
   };
 
   const startEditComment = (alcoholId, comment, index) => {
-      if (comment.uid !== user?.uid && !role.admin) {
-        alert("只能修改自己的心得喔！");
-        return;
-      }
+      if (!checkPermission(comment.uid)) return;
       setEditingComment({ alcoholId, index, text: comment.text });
   };
 
@@ -1090,7 +1118,6 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
                           ) : (
                               <div className="text-base text-[#6E7F9B] flex justify-between items-start">
                                   <span className="leading-snug"><span className="font-bold text-[#725E77]">{c.user}:</span> {c.text}</span>
-                                  {/* 按鈕永遠顯示，點擊時檢查權限 */}
                                   <div className="flex gap-1 shrink-0 ml-2">
                                       <button onClick={() => startEditComment(a.id, c, idx)} className="text-[#77ABC0] p-1 rounded hover:bg-[#F0F4F5]" title="編輯"><Pencil size={14}/></button>
                                       <button onClick={() => handleDeleteComment(a.id, c, idx)} className="text-[#BC8F8F] p-1 rounded hover:bg-[#F0F4F5]" title="刪除"><Trash2 size={14}/></button>
