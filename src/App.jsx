@@ -308,6 +308,7 @@ const App = () => {
         }
         setGeneralData(data);
       } else {
+        // ⚠️ 關鍵修復：唯讀初始化，不自動寫入，防止覆蓋資料
         console.log("No general data found, using default for display.");
         setGeneralData(DEFAULT_GENERAL_DATA);
       }
@@ -317,6 +318,7 @@ const App = () => {
     return () => { unsubMembers(); unsubLogs(); unsubAlcohol(); unsubSongs(); unsubRepertoire(); unsubGeneral(); };
   }, [user]);
 
+  // 修正：全面改用 Popup 登入，避免 missing initial state 問題
   const handleLogin = async () => {
     try { 
       await signInWithPopup(auth, googleProvider); 
@@ -415,7 +417,7 @@ const App = () => {
           <div className="flex items-center gap-3">
             {showImage ? <img src={BAND_LOGO_BASE64} alt="Logo" className="w-9 h-9 rounded-xl object-contain bg-white shadow-sm" onError={() => setImgError(true)} /> : <BandLogo />}
             <span className="font-bold text-lg tracking-wide text-[#77ABC0]">{BAND_NAME}</span>
-            <span className="text-[9px] bg-[#E8F1E9] text-[#5F7A61] px-1.5 py-0.5 rounded-full font-bold ml-1">v3.5</span>
+            <span className="text-[9px] bg-[#E8F1E9] text-[#5F7A61] px-1.5 py-0.5 rounded-full font-bold ml-1">v3.7</span>
           </div>
           <div className="flex items-center gap-2">
             {role.admin && <span className="bg-rose-100 text-rose-600 text-[10px] px-2 py-0.5 rounded-full font-bold">Admin</span>}
@@ -1046,7 +1048,7 @@ const PracticeFeeCalculator = ({ session, members = [], settings = {}, role = {}
   );
 };
 
-// 🛡️ v3.5 修正：AlcoholFeeCalculator 真·強力防呆，解決未載入完成時的崩潰
+// 🛡️ v3.7 修正：AlcoholFeeCalculator 真·強力防呆，解決未載入完成時的崩潰
 const AlcoholFeeCalculator = ({ members = [], settings = {} }) => {
   const [amount, setAmount] = useState('');
   const [payerId, setPayerId] = useState('');
