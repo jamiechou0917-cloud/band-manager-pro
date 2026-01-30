@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
-// v3.3 修正：修復練團費計算頁面崩潰問題，並清理重複宣告
+// v3.0 核心修正：保留 Popup 登入與儲存降級策略 (解決手機登入)，並修復酒櫃計算機崩潰問題
 import { 
   getAuth, 
   signInWithPopup, 
@@ -421,7 +421,7 @@ const App = () => {
           <div className="flex items-center gap-3">
             {showImage ? <img src={BAND_LOGO_BASE64} alt="Logo" className="w-9 h-9 rounded-xl object-contain bg-white shadow-sm" onError={() => setImgError(true)} /> : <BandLogo />}
             <span className="font-bold text-lg tracking-wide text-[#77ABC0]">{BAND_NAME}</span>
-            <span className="text-[9px] bg-[#E8F1E9] text-[#5F7A61] px-1.5 py-0.5 rounded-full font-bold ml-1">v3.3</span>
+            <span className="text-[9px] bg-[#E8F1E9] text-[#5F7A61] px-1.5 py-0.5 rounded-full font-bold ml-1">v3.4</span>
           </div>
           <div className="flex items-center gap-2">
             {role.admin && <span className="bg-rose-100 text-rose-600 text-[10px] px-2 py-0.5 rounded-full font-bold">Admin</span>}
@@ -690,6 +690,376 @@ const DashboardView = ({ members = [], generalData = {}, alcoholCount = 0, db, r
             </div>
           )})}
         </div>
+      </div>
+    </div>
+  );
+};
+
+const MemberEditModal = ({ member, onClose, onSave }) => {
+  const [form, setForm] = useState(member || {});
+  return (
+    <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4">
+      <div className="bg-white p-6 rounded-3xl w-full max-w-sm space-y-3">
+        <h3 className="font-bold text-lg text-[#725E77]">{member.id ? '編輯團員' : '新增團員'}</h3>
+        <div className="grid grid-cols-2 gap-2">
+           <input className="bg-[#FDFBF7] p-3 rounded-xl text-sm" placeholder="暱稱" value={form.nickname || ''} onChange={e => setForm({...form, nickname: e.target.value})} />
+           <input className="bg-[#FDFBF7] p-3 rounded-xl text-sm" placeholder="本名" value={form.realName || ''} onChange={e => setForm({...form, realName: e.target.value})} />
+        </div>
+        <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm border border-[#77ABC0]/30" placeholder="Google Email (權限綁定用)" value={form.email || ''} onChange={e => setForm({...form, email: e.target.value})} />
+        <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm" placeholder="頭像網址 (FB/IG圖片連結，選填)" value={form.avatarUrl || ''} onChange={e => setForm({...form, avatarUrl: e.target.value})} />
+        <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm" placeholder="樂器 (Vocal, Bass...)" value={form.instrument || ''} onChange={e => setForm({...form, instrument: e.target.value})} />
+        <input type="date" className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm" value={form.birthday || ''} onChange={e => setForm({...form, birthday: e.target.value})} />
+        <textarea className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm h-20" placeholder="備註 (僅管理員可見)" value={form.note || ''} onChange={e => setForm({...form, note: e.target.value})} />
+        <div className="flex gap-2 pt-2"><button onClick={onClose} className="flex-1 p-3 rounded-xl text-[#C5B8BF] font-bold">取消</button><button onClick={() => onSave(form)} className="flex-1 p-3 rounded-xl bg-[#77ABC0] text-white font-bold shadow-lg shadow-[#77ABC0]/20">儲存</button></div>
+      </div>
+    </div>
+  );
+};
+
+const SessionLogManager = ({ sessions = [], practices = [], members = [], settings = {}, db, appId, role = {}, user }) => {
+  const [activeSessionId, setActiveSessionId] = useState(null);
+  const safeSessions = Array.isArray(sessions) ? sessions : [];
+  
+  const pendingPractices = (Array.isArray(practices) ? practices : []).filter(p => {
+      if(!p || !p.date) return false;
+      const dateStr = String(p.date); 
+      const pDate = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr; 
+      const existingDates = safeSessions.map(s => s.date);
+      return !existingDates.includes(pDate);
+  }).sort((a,b) => new Date(a.date) - new Date(b.date));
+
+  const [showManualCreate, setShowManualCreate] = useState(false);
+  const [manualDate, setManualDate] = useState(new Date().toISOString().split('T')[0]);
+
+  const handleCreate = async (dateStr, location = '圓頭音樂', preFilledAttendance = []) => {
+    if (!db) return;
+    
+    const newSession = { 
+      date: dateStr, 
+      location: location, 
+      funNotes: '', 
+      tracks: [], 
+      miscExpenses: [], 
+      attendance: preFilledAttendance, 
+      createdAt: serverTimestamp() 
+    };
+    
+    try {
+      const docRef = await addDoc(getCollectionRef(db, 'logs'), newSession);
+      setActiveSessionId(docRef.id);
+      setShowManualCreate(false);
+    } catch(e) { alert("Error: " + e.message); }
+  };
+  
+  const handleDeleteSession = async (e, id) => {
+    e.stopPropagation();
+    if (!db || !confirm("確定要刪除這筆練團日誌嗎？資料將無法復原。")) return;
+    await deleteDoc(getDocRef(db, 'logs', id));
+  };
+
+  if (activeSessionId) {
+    const session = safeSessions.find(s => s.id === activeSessionId);
+    if (!session) return <div className="p-10 text-center text-[#CBABCA]">正在同步...</div>;
+    return <SessionDetail session={session} members={members} settings={settings} onBack={() => setActiveSessionId(null)} db={db} role={role} user={user} />;
+  }
+
+  return (
+    <div className="space-y-4 animate-in slide-in-from-right-8">
+      <div className="flex justify-between items-end px-1">
+        <h2 className="text-2xl font-bold text-[#725E77]">練團日誌</h2>
+        <button 
+          onClick={() => setShowManualCreate(true)} 
+          className="text-xs font-bold text-[#77ABC0] bg-[#F0F4F5] px-3 py-1.5 rounded-lg flex items-center gap-1 hover:bg-[#E0E7EA]"
+        >
+          <FilePlus size={14}/> 自訂日誌
+        </button>
+      </div>
+      
+      {pendingPractices.map(p => {
+        const dateOnly = p.date.split('T')[0];
+        const attendingIds = members.filter(m => m.attendance?.includes(dateOnly)).map(m => m.id);
+        
+        return (
+        <button key={p.id || Math.random()} onClick={() => handleCreate(dateOnly, p.location, attendingIds)} className="w-full p-4 rounded-[28px] border-2 border-dashed border-[#CBABCA] bg-[#FDFBF7] flex items-center justify-between text-[#CBABCA] hover:bg-[#FFF5F7] transition group">
+          <div className="flex items-center gap-3"><div className="bg-[#F2D7DD]/30 p-2 rounded-full group-hover:scale-110 transition text-[#CBABCA]"><Plus size={20}/></div><div className="text-left"><div className="font-bold text-lg text-[#CBABCA]">{new Date(p.date).toLocaleDateString()} 待補</div><div className="text-xs opacity-70 text-[#C5B8BF]">{p.title}</div></div></div>
+          <ChevronDown className="-rotate-90 opacity-50 text-[#C5B8BF]" />
+        </button>
+      )})}
+
+      {showManualCreate && (
+        <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4">
+           <div className="bg-white p-6 rounded-3xl w-full max-w-sm space-y-4">
+              <h3 className="font-bold text-lg text-[#725E77]">自訂新增日誌</h3>
+              <input type="date" className="w-full bg-[#FDFBF7] p-3 rounded-xl text-sm" value={manualDate} onChange={e => setManualDate(e.target.value)} />
+              <div className="flex gap-2 pt-2"><button onClick={() => setShowManualCreate(false)} className="flex-1 p-3 rounded-xl text-[#C5B8BF] font-bold">取消</button><button onClick={() => handleCreate(manualDate)} className="flex-1 p-3 rounded-xl bg-[#77ABC0] text-white font-bold shadow-lg">建立</button></div>
+           </div>
+        </div>
+      )}
+
+      {safeSessions.map(s => (
+        <div key={s.id} onClick={() => setActiveSessionId(s.id)} className="bg-white p-5 rounded-[28px] shadow-sm border border-[#E0E0D9] cursor-pointer hover:border-[#77ABC0]/50 transition relative group">
+          <div className="flex justify-between items-start mb-2">
+            <div><span className="bg-[#A8D8E2]/20 text-[#6E7F9B] text-[10px] font-bold px-2 py-0.5 rounded border border-[#A8D8E2]/30">{s.date}</span><h3 className="font-bold text-xl mt-1 text-[#725E77]">{s.tracks?.length || 0} 首歌</h3></div>
+            <div className="flex items-center gap-2">
+                {role.admin && <button onClick={(e) => handleDeleteSession(e, s.id)} className="p-1 text-[#BC8F8F] opacity-0 group-hover:opacity-100 hover:text-red-600 transition"><Trash2 size={16}/></button>}
+                <div className="bg-[#FDFBF7] p-2 rounded-full text-[#C5B8BF] group-hover:bg-[#E5C3D3]/20 group-hover:text-[#CBABCA] transition"><ChevronDown className="-rotate-90" size={20}/></div>
+            </div>
+          </div>
+          <div className="text-[10px] text-[#C5B8BF] mt-1 flex items-center gap-1"><MapPin size={10}/> {s.location}</div>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+const SessionDetail = ({ session, members, settings, onBack, db, role, user }) => {
+  const [tab, setTab] = useState('tracks'); 
+  const [funNotes, setFunNotes] = useState(session.funNotes || "");
+  const [editingLocation, setEditingLocation] = useState(false);
+  const [location, setLocation] = useState(session.location || "圓頭音樂");
+
+  const handleUpdateNotes = async () => { if (!db) return; await updateDoc(getDocRef(db, 'logs', session.id), { funNotes }); };
+  const handleUpdateLocation = async () => { if (!db) return; await updateDoc(getDocRef(db, 'logs', session.id), { location }); setEditingLocation(false); };
+  
+  const toggleSessionAttendance = async (memberId) => {
+      const currentAtt = session.attendance || []; 
+      const newAtt = currentAtt.includes(memberId) ? currentAtt.filter(id => id !== memberId) : [...currentAtt, memberId];
+      await updateDoc(getDocRef(db, 'logs', session.id), { attendance: newAtt });
+  };
+
+  return (
+    <div className="animate-in fade-in duration-300">
+      <button onClick={onBack} className="flex items-center gap-1 text-[#C5B8BF] font-bold text-sm mb-4 hover:text-[#725E77]"><ChevronDown className="rotate-90" size={16}/> 返回列表</button>
+      <div className="bg-white p-6 rounded-[32px] shadow-sm border border-[#E0E0D9] mb-6">
+        <h1 className="text-3xl font-black text-[#725E77]">{session.date}</h1>
+        {editingLocation ? (
+          <div className="flex gap-2 mt-1"><input className="bg-[#FDFBF7] border border-[#77ABC0] rounded-lg px-2 py-1 text-sm text-[#725E77]" value={location} onChange={e=>setLocation(e.target.value)} /><button onClick={handleUpdateLocation} className="text-[#77ABC0]"><Check size={16}/></button></div>
+        ) : (
+          <div className="flex items-center gap-2 text-[#C5B8BF] text-sm font-bold mt-1 group cursor-pointer" onClick={() => setEditingLocation(true)}>
+             <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}`} target="_blank" className="flex items-center gap-2 hover:text-[#77ABC0] transition" onClick={(e) => e.stopPropagation()}><MapPin size={14}/> {location}</a>
+             <Pencil size={12} className="opacity-0 group-hover:opacity-100 transition"/>
+          </div>
+        )}
+        <div className="mt-4 bg-[#F2D7DD]/20 p-3 rounded-2xl border border-[#CBABCA]/20 flex gap-2 items-start">
+          <Smile size={16} className="text-[#F1CEBA] shrink-0 mt-0.5"/>
+          <textarea className="bg-transparent w-full text-xs font-bold text-[#725E77] outline-none resize-none h-auto min-h-[40px]" value={funNotes} onChange={e => setFunNotes(e.target.value)} onBlur={handleUpdateNotes} placeholder="輸入不負責任備註..."/>
+        </div>
+        <div className="mt-4 pt-3 border-t border-[#F2D7DD]/30">
+          <div className="text-[10px] font-bold text-[#C5B8BF] mb-2 uppercase">👥 出席名單設定</div>
+          <div className="flex flex-wrap gap-2">
+            {members.map(m => (
+              <button key={m.id} onClick={() => toggleSessionAttendance(m.id)} className={`px-2 py-1 rounded-lg text-xs font-bold border transition ${session.attendance?.includes(m.id) ? 'bg-[#77ABC0] text-white border-[#77ABC0]' : 'bg-white text-[#C5B8BF] border-[#E0E0D9]'}`}>{m.nickname}</button>))} 
+          </div>
+        </div>
+      </div>
+      <div className="flex bg-[#E0E0D9]/50 p-1 rounded-xl mb-6">
+        {['tracks', 'practice-fee', 'misc-fee'].map(t => (
+            <button key={t} onClick={() => setTab(t)} className={`flex-1 py-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1 ${tab === t ? 'bg-white shadow text-[#77ABC0]' : 'text-[#C5B8BF]'}`}>{t === 'tracks' ? '曲目' : t === 'practice-fee' ? '練團費' : '雜支'}</button>
+        ))}
+      </div>
+      <div className="bg-white rounded-[32px] border border-[#E0E0D9] p-2 min-h-[300px]">
+        {tab === 'tracks' && <TrackList session={session} db={db} user={user} role={role} members={members} />}
+        {tab === 'practice-fee' && <PracticeFeeCalculator session={session} members={members} settings={settings} role={role} db={db} />}
+        {tab === 'misc-fee' && <MiscFeeCalculator session={session} members={members} db={db} />}
+      </div>
+    </div>
+  );
+};
+
+const TrackList = ({ session, db, user, role, members }) => {
+  const [expandedTrack, setExpandedTrack] = useState(null);
+  const [newTrackName, setNewTrackName] = useState("");
+  const [newComment, setNewComment] = useState("");
+  
+  const [editingLinkId, setEditingLinkId] = useState(null);
+  const [tempLinkVal, setTempLinkVal] = useState("");
+
+  const tracks = Array.isArray(session.tracks) ? session.tracks : [];
+  const auth = getAuth();
+  const currentUser = auth.currentUser;
+
+  const handleAddTrack = async () => { if (!newTrackName.trim() || !db) return; const newTrack = { id: Date.now(), title: newTrackName, status: 'new', link: '', comments: [] }; await updateDoc(getDocRef(db, 'logs', session.id), { tracks: [...tracks, newTrack] }); setNewTrackName(""); };
+  
+  const handleAddComment = async (trackId) => { 
+      if (!newComment.trim()) return; 
+      
+      const currentMember = members.find(m => (m.email || '').toLowerCase() === (user.email || '').toLowerCase());
+      const authorName = currentMember ? currentMember.nickname : (user.displayName || '團員');
+
+      const updatedTracks = tracks.map(t => { 
+          if (t.id === trackId) { 
+              return { 
+                  ...t, 
+                  comments: [
+                      ...(t.comments || []), 
+                      { 
+                          text: newComment, 
+                          user: authorName, 
+                          uid: user?.uid, 
+                          email: user?.email, 
+                          timestamp: Date.now() 
+                      }
+                  ] 
+              }; 
+          } 
+          return t; 
+      }); 
+      await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks }); 
+      setNewComment(""); 
+  };
+  
+  const checkPermission = (commentUid) => {
+      if (user?.uid === commentUid || role.admin) return true;
+      return false;
+  };
+
+  const handleDeleteComment = async (trackId, comment, commentIdx) => { 
+      if (!checkPermission(comment.uid)) return;
+      if (!confirm("刪除留言?")) return; 
+      
+      const updatedTracks = tracks.map(t => { if (t.id === trackId) { const newComments = [...t.comments]; newComments.splice(commentIdx, 1); return { ...t, comments: newComments }; } return t; }); 
+      await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks }); 
+  };
+
+  const handleEditComment = async (trackId, comment, commentIdx) => {
+      if (!checkPermission(comment.uid)) return;
+      
+      const newVal = prompt("編輯留言", comment.text);
+      if (newVal === null || newVal === comment.text) return; 
+
+      const updatedTracks = tracks.map(t => { if (t.id === trackId) { const newComments = [...t.comments]; newComments[commentIdx].text = newVal; return { ...t, comments: newComments }; } return t; }); 
+      await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks }); 
+  };
+
+  const handleUpdateLink = async (trackId, link) => { 
+      const updatedTracks = tracks.map(t => { if (t.id === trackId) { return { ...t, link }; } return t; }); 
+      await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks }); 
+  };
+  const startEditLink = (trackId, currentLink) => { setEditingLinkId(trackId); setTempLinkVal(currentLink || ""); };
+  const saveLink = async (trackId) => { await handleUpdateLink(trackId, tempLinkVal); setEditingLinkId(null); };
+  const cancelEditLink = () => { setEditingLinkId(null); setTempLinkVal(""); };
+  const deleteLink = async (trackId) => { if(confirm("確定要移除這個連結嗎？")) { await handleUpdateLink(trackId, ""); } };
+
+  return (
+    <div className="p-3 space-y-3">
+      {tracks.map(t => (
+        <div key={t.id} className="border border-[#E0E0D9] rounded-2xl overflow-hidden">
+          <div className="bg-[#FAFAF9] p-4 flex justify-between items-center cursor-pointer" onClick={() => setExpandedTrack(expandedTrack === t.id ? null : t.id)}>
+            <div className="flex items-center gap-2 overflow-hidden">
+                <span className="font-bold text-[#725E77] truncate">{t.title}</span>
+                {t.link && <a href={t.link} target="_blank" onClick={e=>e.stopPropagation()} className="text-[#77ABC0] hover:text-[#50656e] bg-white p-1 rounded-full shadow-sm"><ExternalLink size={14}/></a>}
+            </div>
+            <ChevronDown size={16} className={`text-[#C5B8BF] ${expandedTrack === t.id ? 'rotate-180' : ''}`}/>
+          </div>
+          {expandedTrack === t.id && (
+            <div className="p-4 bg-white border-t border-[#E0E0D9] space-y-3">
+              {editingLinkId === t.id ? (
+                  <div className="flex gap-2 items-center bg-[#F0F4F5] p-2 rounded-lg border border-[#77ABC0]">
+                      <LinkIcon size={14} className="text-[#77ABC0] shrink-0"/>
+                      <input className="bg-transparent text-xs w-full outline-none text-[#725E77]" placeholder="貼上連結 (Drive/YouTube)..." value={tempLinkVal} autoFocus onChange={(e) => setTempLinkVal(e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter') saveLink(t.id); else if(e.key === 'Escape') cancelEditLink(); }} />
+                      <button onClick={() => saveLink(t.id)} className="text-[#77ABC0] hover:bg-white p-1 rounded transition"><Check size={16}/></button>
+                      <button onClick={cancelEditLink} className="text-[#BC8F8F] hover:bg-white p-1 rounded transition"><X size={16}/></button>
+                  </div>
+              ) : (
+                  <div className="flex items-center justify-between bg-[#F0F4F5] p-2 rounded-lg group/link">
+                      <div className="flex items-center gap-2 overflow-hidden flex-1">
+                          <LinkIcon size={14} className="text-[#C5B8BF] shrink-0"/>
+                          {t.link ? (<a href={t.link} target="_blank" className="text-xs text-[#77ABC0] underline truncate block hover:text-[#50656e]">{t.link}</a>) : (<span className="text-xs text-[#C5B8BF] italic">尚未新增連結</span>)}
+                      </div>
+                      <div className="flex gap-1 shrink-0 ml-2">
+                          <button onClick={() => startEditLink(t.id, t.link)} className="text-[#725E77] hover:bg-white p-1.5 rounded transition bg-white/50 shadow-sm" title="編輯連結"><Pencil size={12}/></button>
+                          {t.link && <button onClick={() => deleteLink(t.id)} className="text-[#BC8F8F] hover:bg-white p-1.5 rounded transition bg-white/50 shadow-sm" title="移除連結"><Trash2 size={12}/></button>}
+                      </div>
+                  </div>
+              )}
+
+              {(t.comments || []).map((c, i) => {
+                  let displayName = '團員';
+                  if (c.uid) {
+                      const found = members.find(m => m.id === c.uid);
+                      if (found) displayName = found.nickname;
+                      else displayName = c.user || '團員';
+                  } else {
+                      displayName = c.user || '團員';
+                  }
+                  
+                  return (
+                  <div key={i} className="text-xs bg-[#FDFBF7] p-2 rounded-lg flex justify-between items-start">
+                      <div><span className="font-bold text-[#725E77]">{displayName}:</span> {c.text}</div>
+                      {/* 按鈕僅限本人或管理員顯示 */}
+                      {checkPermission(c.uid) && (
+                        <div className="flex gap-1">
+                            <button onClick={() => handleEditComment(t.id, c, i)} className="text-[#77ABC0] p-1 rounded hover:bg-white"><Pencil size={12}/></button>
+                            <button onClick={() => handleDeleteComment(t.id, c, i)} className="text-[#BC8F8F] p-1 rounded hover:bg-white"><Trash2 size={12}/></button>
+                        </div>
+                      )}
+                  </div>
+              )})}
+              <div className="flex gap-2"><input className="w-full bg-[#FDFBF7] text-xs p-2 rounded-lg outline-none text-[#725E77]" placeholder="輸入留言..." value={newComment} onChange={e => setNewComment(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAddComment(t.id)} /><button onClick={() => handleAddComment(t.id)} className="text-[#77ABC0]"><Check size={16}/></button></div>
+            </div>
+          )}
+        </div>
+      ))}
+      <div className="flex gap-2"><input className="flex-1 bg-[#FDFBF7] border border-[#E0E0D9] rounded-xl px-3 text-xs outline-none" placeholder="輸入新歌名..." value={newTrackName} onChange={e => setNewTrackName(e.target.value)} /><button onClick={handleAddTrack} className="px-4 py-3 bg-[#77ABC0]/10 text-[#77ABC0] font-bold text-xs flex items-center justify-center gap-1 border border-dashed border-[#77ABC0]/50 hover:bg-[#77ABC0]/20 rounded-2xl transition"><Plus size={14}/> 新增</button></div>
+    </div>
+  );
+};
+
+// 🛡️ v3.4 修正：AlcoholFeeCalculator 強力防呆，解決未載入完成時的崩潰
+const AlcoholFeeCalculator = ({ members = [], settings = {} }) => {
+  const [amount, setAmount] = useState('');
+  const [payerId, setPayerId] = useState('');
+  const [splitters, setSplitters] = useState([]);
+  
+  // 雙重保險：確保 members 真的是陣列
+  const safeMembers = Array.isArray(members) ? members : [];
+  
+  const perPerson = splitters.length > 0 ? Math.ceil(parseInt(amount || 0) / splitters.length) : 0;
+  
+  const toggleSplitter = (id) => {
+    if (splitters.includes(id)) setSplitters(splitters.filter(s => s !== id));
+    else setSplitters([...splitters, id]);
+  };
+
+  const copyResult = () => {
+    if (!amount || !payerId || splitters.length === 0) return alert("請完整填寫資訊");
+    // 🛡️ 修正：資料查找防呆
+    const payerName = safeMembers.find(m => m.id === payerId)?.nickname || '未知';
+    const text = `🍺 酒水補貨\n----------------\n💰 總金額：$${amount}\n👑 墊付人：${payerName}\n👥 分攤人：${splitters.map(id => (safeMembers.find(m => m.id === id)?.nickname || '未知')).join('、')}\n----------------\n👉 每人應付：$${perPerson}\n給 ${payerName}`;
+    if(secureCopy(text)) alert("複製成功！");
+  };
+
+  return (
+    <div className="p-4 space-y-6">
+      <div className="bg-white p-5 rounded-[28px] border border-[#E0E0D9] shadow-sm space-y-4">
+        <h3 className="font-bold text-[#725E77] flex items-center gap-2"><Calculator size={20}/> 補貨計算機</h3>
+        <div className="space-y-1">
+           <label className="text-[10px] font-bold text-[#C5B8BF] uppercase">總金額</label>
+           <input type="number" className="w-full bg-[#FDFBF7] p-3 rounded-xl text-lg font-bold text-[#725E77] outline-none" placeholder="$" value={amount} onChange={e => setAmount(e.target.value)} />
+        </div>
+        <div className="space-y-1">
+           <label className="text-[10px] font-bold text-[#C5B8BF] uppercase">誰先墊錢？</label>
+           <div className="flex flex-wrap gap-2">
+             {safeMembers.map(m => (
+               <button key={m.id} onClick={() => setPayerId(m.id)} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition ${payerId === m.id ? 'bg-[#F1CEBA] text-white border-[#F1CEBA]' : 'bg-white text-[#C5B8BF] border-[#E0E0D9]'}`}>{m.nickname}</button>
+             ))}
+           </div>
+        </div>
+        <div className="space-y-1">
+           <label className="text-[10px] font-bold text-[#C5B8BF] uppercase">誰要分攤？</label>
+           <div className="flex flex-wrap gap-2">
+             {safeMembers.map(m => (
+               <button key={m.id} onClick={() => toggleSplitter(m.id)} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition ${splitters.includes(m.id) ? 'bg-[#77ABC0] text-white border-[#77ABC0]' : 'bg-white text-[#C5B8BF] border-[#E0E0D9]'}`}>{m.nickname}</button>
+             ))}
+           </div>
+        </div>
+        {perPerson > 0 && (
+          <div className="bg-[#F0F4F5] p-3 rounded-xl text-center">
+            <div className="text-xs text-[#6E7F9B] mb-1">每人應付</div>
+            <div className="text-2xl font-black text-[#725E77]">${perPerson}</div>
+          </div>
+        )}
+        <button onClick={copyResult} className="w-full py-3 bg-[#77ABC0] text-white rounded-xl font-bold shadow-lg active:scale-95 transition">複製結算結果</button>
       </div>
     </div>
   );
