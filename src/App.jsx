@@ -18,6 +18,7 @@ import {
 // ==========================================
 // 🛡️ 錯誤邊界元件 (防止白頁)
 // ==========================================
+// 修正 1：移除 TS 泛型語法 <any, any>，避免在純 JS 環境或嚴格 JSX 解析器中報錯
 class ErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { hasError: false, error: null }; }
   static getDerivedStateFromError(error) { return { hasError: true, error }; }
@@ -49,6 +50,9 @@ const ADMIN_EMAILS = [
 
 const ROLE_FINANCE_NAME = "陳昱維"; 
 const ROLE_ALCOHOL_NAME = "李家賢"; 
+// 新增：明確指定酒櫃管理員的 Email，確保權限不會因為改名而遺失
+const ROLE_ALCOHOL_EMAILS = ["sean760404@gmail.com"]; 
+
 const BAND_NAME = "不開玩笑";
 const BAND_LOGO_BASE64 = ""; 
 const BAND_LOGO_URL = ""; 
@@ -243,8 +247,10 @@ const App = () => {
 
        const financeMember = members.find(m => m.realName === ROLE_FINANCE_NAME || m.nickname === ROLE_FINANCE_NAME);
        const isFinance = isAdmin || (financeMember && normalize(financeMember.email) === userEmail);
+       
        const alcoholMember = members.find(m => m.realName === ROLE_ALCOHOL_NAME || m.nickname === ROLE_ALCOHOL_NAME);
-       const isAlcohol = isAdmin || (alcoholMember && normalize(alcoholMember.email) === userEmail);
+       // 修改：權限判斷加入 Email 白名單檢查
+       const isAlcohol = isAdmin || (alcoholMember && normalize(alcoholMember.email) === userEmail) || ROLE_ALCOHOL_EMAILS.includes(userEmail);
 
        setRole({ admin: isAdmin, finance: isFinance, alcohol: isAlcohol });
        setLoading(false);
@@ -272,7 +278,9 @@ const App = () => {
         if (data.nextPractice && !data.practices) data.practices = [data.nextPractice];
         if (!data.settings?.alcoholTypes) data.settings = { ...DEFAULT_GENERAL_DATA.settings, ...(data.settings || {}) };
         
+        // 🛡️ 強力防呆：確保 practices 永遠是陣列
         if (!Array.isArray(data.practices)) data.practices = [];
+        // 🛡️ 強力防呆：確保 alcoholTypes 永遠是陣列
         if (data.settings && !Array.isArray(data.settings.alcoholTypes)) {
             data.settings.alcoholTypes = DEFAULT_GENERAL_DATA.settings.alcoholTypes;
         }
@@ -300,6 +308,7 @@ const App = () => {
 
   const renderContent = () => {
     const data = generalData || DEFAULT_GENERAL_DATA;
+    // 🛡️ 防呆：傳入前再次確保 practices 是陣列
     const safePractices = Array.isArray(data.practices) ? data.practices : [];
     
     switch (activeTab) {
@@ -308,6 +317,7 @@ const App = () => {
       case 'alcohol': return <AlcoholManager alcohols={alcohols} members={members} settings={data.settings} db={db} role={role} user={user} />;
       case 'tech': return <TechView songs={songs} db={db} role={role} user={user} />;
       case 'admin': return <AdminDashboard members={members} logs={logs} generalData={data} db={db} />;
+      // 🛡️ 致命地雷修復：確保 default case 也回傳完整的 props
       default: return <DashboardView members={members} generalData={data} alcoholCount={alcohols.length} db={db} role={role} user={user} />;
     }
   };
@@ -399,6 +409,7 @@ const NavBtn = ({ id, icon: Icon, label, active, set }) => (
 );
 
 // --- 1. Dashboard ---
+// 🛡️ 元件級別防呆：使用預設參數 ({ members = [], ... }) 確保內部不會炸裂
 const DashboardView = ({ members = [], generalData = {}, alcoholCount = 0, db, role = {}, user }) => {
   const [editingPractice, setEditingPractice] = useState(false);
   const [practices, setPractices] = useState(generalData.practices || []);
@@ -412,6 +423,8 @@ const DashboardView = ({ members = [], generalData = {}, alcoholCount = 0, db, r
   }, [generalData.practices, editingPractice]);
 
   const now = new Date();
+  
+  // 🛡️ 防呆：過濾無效日期
   const sortedPractices = [...practices]
     .filter(p => p && p.date) 
     .map(p => ({...p, dateObj: new Date(p.date), endObj: p.endTime ? new Date(p.endTime) : new Date(new Date(p.date).getTime() + 2*60*60*1000) }))
@@ -541,7 +554,7 @@ const DashboardView = ({ members = [], generalData = {}, alcoholCount = 0, db, r
             <h2 className="text-xl font-black text-[#E0E7EA] uppercase tracking-widest drop-shadow-md">{isValidDate ? nextPractice.title : "無練團安排"}</h2>
             <div className="flex gap-2">
               {role.admin && <button onClick={() => setEditingPractice(true)} className="bg-white/20 p-2 rounded-full backdrop-blur-sm hover:bg-white/40"><Pencil size={18}/></button>}
-              <a href={generateCalendarUrl(nextPractice)} target="_blank" className="bg-white/20 hover:bg-white/30 p-2 rounded-full backdrop-blur-sm transition active:scale-95"><CalendarPlus size={18} className="text-white"/></a>
+              {/* 修正：移除倒數卡片上的行事曆連結 */}
             </div>
           </div>
           <div className="text-4xl font-black mb-1 font-mono tracking-tight drop-shadow-md">
@@ -576,6 +589,7 @@ const DashboardView = ({ members = [], generalData = {}, alcoholCount = 0, db, r
                       <div className="text-xs text-slate-400 font-bold mb-1">{new Date(p.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} - {p.endTime ? new Date(p.endTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '??'} @ {p.location}</div>
                       {p.memo && <div className="text-xs text-[#77ABC0] bg-[#77ABC0]/10 px-2 py-1 rounded w-fit mt-1 flex items-center gap-1"><StickyNote size={10}/> {p.memo}</div>}
                   </div>
+                  {/* 新增：每一行的加入行事曆按鈕 */}
                   <a href={generateCalendarUrl(p)} target="_blank" className="p-2 text-[#C5B8BF] hover:text-[#77ABC0] hover:bg-[#77ABC0]/10 rounded-lg transition" title="加入行事曆">
                      <CalendarPlus size={18}/>
                   </a>
@@ -828,11 +842,10 @@ const TrackList = ({ session, db, user, role, members }) => {
 
   const handleAddTrack = async () => { if (!newTrackName.trim() || !db) return; const newTrack = { id: Date.now(), title: newTrackName, status: 'new', link: '', comments: [] }; await updateDoc(getDocRef(db, 'logs', session.id), { tracks: [...tracks, newTrack] }); setNewTrackName(""); };
   
-  // 修改：儲存留言時，透過 Email 比對成員暱稱並存入
+  // 修改：儲存留言時，儲存 email 以便動態對應
   const handleAddComment = async (trackId) => { 
       if (!newComment.trim()) return; 
       
-      // 🕵️ 抓取暱稱邏輯
       const currentMember = members.find(m => (m.email || '').toLowerCase() === (user.email || '').toLowerCase());
       const authorName = currentMember ? currentMember.nickname : (user.displayName || '團員');
 
@@ -844,8 +857,9 @@ const TrackList = ({ session, db, user, role, members }) => {
                       ...(t.comments || []), 
                       { 
                           text: newComment, 
-                          user: authorName, // 直接存入暱稱
+                          user: authorName, 
                           uid: user?.uid, 
+                          email: user?.email, // 修正：多存 Email 以便未來比對
                           timestamp: Date.now() 
                       }
                   ] 
@@ -935,8 +949,15 @@ const TrackList = ({ session, db, user, role, members }) => {
               )}
 
               {(t.comments || []).map((c, i) => {
-                  // 顯示邏輯修正：直接使用 c.user (新資料是暱稱)，若無則 fallback
-                  const displayName = c.user || (c.uid ? (members.find(m => m.id === c.uid)?.nickname || '團員') : '團員');
+                  // 修正邏輯：優先使用 Email 比對，其次用 UID，最後 fallback 到存入的名稱
+                  let displayName = c.user || '團員';
+                  
+                  // 嘗試用 Email 比對 (最準確)
+                  if (c.email) {
+                      const foundByEmail = members.find(m => (m.email || '').toLowerCase() === c.email.toLowerCase());
+                      if (foundByEmail) displayName = foundByEmail.nickname;
+                  }
+                  
                   return (
                   <div key={i} className="text-xs bg-[#FDFBF7] p-2 rounded-lg flex justify-between items-start group">
                       <div><span className="font-bold text-[#725E77]">{displayName}:</span> {c.text}</div>
@@ -1174,7 +1195,7 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
                                   <button onClick={() => setEditingComment({ alcoholId: null, index: null, text: '' })} className="text-[#BC8F8F] hover:bg-white p-1 rounded"><X size={16}/></button>
                               </div>
                           ) : (
-                              <div className="text-sm text-[#6E7F9B] flex justify-between items-start">
+                              <div className="text-base text-[#6E7F9B] flex justify-between items-start">
                                   <span className="leading-snug"><span className="font-bold text-[#725E77]">{c.user}:</span> {c.text}</span>
                                   {(c.uid === user.uid || role.admin) && (
                                       <div className="flex gap-1 opacity-0 group-hover/comment:opacity-100 transition-opacity">
