@@ -828,8 +828,34 @@ const TrackList = ({ session, db, user, role, members }) => {
 
   const handleAddTrack = async () => { if (!newTrackName.trim() || !db) return; const newTrack = { id: Date.now(), title: newTrackName, status: 'new', link: '', comments: [] }; await updateDoc(getDocRef(db, 'logs', session.id), { tracks: [...tracks, newTrack] }); setNewTrackName(""); };
   
-  // 修改：儲存留言時，不存 displayName，改存 uid 讓前端即時 render 暱稱
-  const handleAddComment = async (trackId) => { if (!newComment.trim()) return; const updatedTracks = tracks.map(t => { if (t.id === trackId) { return { ...t, comments: [...(t.comments || []), { text: newComment, uid: user?.uid, timestamp: Date.now() }] }; } return t; }); await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks }); setNewComment(""); };
+  // 修改：儲存留言時，透過 Email 比對成員暱稱並存入
+  const handleAddComment = async (trackId) => { 
+      if (!newComment.trim()) return; 
+      
+      // 🕵️ 抓取暱稱邏輯
+      const currentMember = members.find(m => (m.email || '').toLowerCase() === (user.email || '').toLowerCase());
+      const authorName = currentMember ? currentMember.nickname : (user.displayName || '團員');
+
+      const updatedTracks = tracks.map(t => { 
+          if (t.id === trackId) { 
+              return { 
+                  ...t, 
+                  comments: [
+                      ...(t.comments || []), 
+                      { 
+                          text: newComment, 
+                          user: authorName, // 直接存入暱稱
+                          uid: user?.uid, 
+                          timestamp: Date.now() 
+                      }
+                  ] 
+              }; 
+          } 
+          return t; 
+      }); 
+      await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks }); 
+      setNewComment(""); 
+  };
   
   const handleDeleteComment = async (trackId, commentIdx) => { if(!confirm("刪除留言?")) return; const updatedTracks = tracks.map(t => { if (t.id === trackId) { const newComments = [...t.comments]; newComments.splice(commentIdx, 1); return { ...t, comments: newComments }; } return t; }); await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks }); };
   const handleEditComment = async (trackId, commentIdx, newText) => { const updatedTracks = tracks.map(t => { if (t.id === trackId) { const newComments = [...t.comments]; newComments[commentIdx].text = newText; return { ...t, comments: newComments }; } return t; }); await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks }); };
@@ -860,15 +886,6 @@ const TrackList = ({ session, db, user, role, members }) => {
       if(confirm("確定要移除這個連結嗎？")) {
           await handleUpdateLink(trackId, "");
       }
-  };
-
-  // 輔助函式：取得顯示名稱
-  const getDisplayName = (uid) => {
-      const member = members.find(m => m.id === uid); // 先找 id
-      if (member) return member.nickname;
-      const memberByEmail = members.find(m => m.email === user?.email); // 再找 email (雖然這裡只有 uid，但如果資料結構有存 uid 最好)
-      // 由於 comments 以前存的是 { user: "名字" }，為了相容舊資料：
-      return member ? member.nickname : "團員";
   };
 
   return (
@@ -918,8 +935,8 @@ const TrackList = ({ session, db, user, role, members }) => {
               )}
 
               {(t.comments || []).map((c, i) => {
-                  // 相容舊資料：如果有 c.uid 就查暱稱，否則用舊的 c.user
-                  const displayName = c.uid ? (members.find(m => m.id === c.uid)?.nickname || '團員') : c.user;
+                  // 顯示邏輯修正：直接使用 c.user (新資料是暱稱)，若無則 fallback
+                  const displayName = c.user || (c.uid ? (members.find(m => m.id === c.uid)?.nickname || '團員') : '團員');
                   return (
                   <div key={i} className="text-xs bg-[#FDFBF7] p-2 rounded-lg flex justify-between items-start group">
                       <div><span className="font-bold text-[#725E77]">{displayName}:</span> {c.text}</div>
@@ -1072,24 +1089,66 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
   const [showAdd, setShowAdd] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [customType, setCustomType] = useState("");
-  // 🛡️ 強力防呆：確保 alcoholTypes 是陣列
+  // 狀態：處理評論的編輯
+  const [editingComment, setEditingComment] = useState({ alcoholId: null, index: null, text: '' });
+  const [newCommentMap, setNewCommentMap] = useState({}); // 獨立處理每個酒品的輸入框
+
   const alcoholOptions = Array.isArray(settings?.alcoholTypes) ? settings.alcoholTypes : ['紅酒', '白酒', '清酒', '氣泡酒', '啤酒', '威士忌', '其他'];
-  // 🛡️ 強力防呆：確保 alcohols 是陣列
   const safeAlcohols = Array.isArray(alcohols) ? alcohols : [];
 
   const handleSave = async () => { if (!newAlcohol.name || !db) return; const finalType = newAlcohol.type === '其他' ? customType : newAlcohol.type; const data = { ...newAlcohol, type: finalType }; if (editingId) await updateDoc(getDocRef(db, 'alcohol', editingId), data); else await addDoc(getCollectionRef(db, 'alcohol'), data); setShowAdd(false); setEditingId(null); setNewAlcohol({ name: '', type: '威士忌', level: 100, rating: 5, note: '', comments: [] }); };
   const handleDelete = async (id) => { if (!db || !confirm("確定刪除此酒品？")) return; await deleteDoc(getDocRef(db, 'alcohol', id)); };
   const handleEdit = (a) => { setNewAlcohol(a); setEditingId(a.id); setShowAdd(true); };
-  const handleAddComment = async (id, text, currentComments) => { if(!text.trim()) return; const memberInfo = members.find(m => m.email === user.email); const displayName = memberInfo ? memberInfo.nickname : user.displayName; const newComment = { user: displayName, text, uid: user.uid }; await updateDoc(getDocRef(db, 'alcohol', id), { comments: [...(currentComments||[]), newComment] }); };
-  const handleDeleteComment = async (alcoholId, commentIdx, currentComments) => { if(!confirm("刪除留言？")) return; const newComments = [...currentComments]; newComments.splice(commentIdx, 1); await updateDoc(getDocRef(db, 'alcohol', alcoholId), { comments: newComments }); };
+  
+  // 新增評論 (現在包含確認按鈕)
+  const handleAddComment = async (id) => { 
+      const text = newCommentMap[id];
+      if(!text?.trim()) return; 
+      
+      const memberInfo = members.find(m => (m.email || '').toLowerCase() === (user.email || '').toLowerCase());
+      const displayName = memberInfo ? memberInfo.nickname : (user.displayName || '團員');
+      
+      const currentComments = alcohols.find(a => a.id === id)?.comments || [];
+      const newComment = { user: displayName, text, uid: user.uid }; 
+      
+      await updateDoc(getDocRef(db, 'alcohol', id), { comments: [...currentComments, newComment] }); 
+      setNewCommentMap({ ...newCommentMap, [id]: '' });
+  };
+
+  const handleDeleteComment = async (alcoholId, commentIdx) => { 
+      if(!confirm("刪除留言？")) return; 
+      const alcohol = alcohols.find(a => a.id === alcoholId);
+      const newComments = [...(alcohol.comments || [])]; 
+      newComments.splice(commentIdx, 1); 
+      await updateDoc(getDocRef(db, 'alcohol', alcoholId), { comments: newComments }); 
+  };
+
+  // 評論編輯功能
+  const startEditComment = (alcoholId, index, text) => {
+      setEditingComment({ alcoholId, index, text });
+  };
+
+  const saveEditedComment = async () => {
+      const { alcoholId, index, text } = editingComment;
+      const alcohol = alcohols.find(a => a.id === alcoholId);
+      const newComments = [...(alcohol.comments || [])];
+      newComments[index].text = text;
+      await updateDoc(getDocRef(db, 'alcohol', alcoholId), { comments: newComments });
+      setEditingComment({ alcoholId: null, index: null, text: '' });
+  };
 
   return (
     <div className="space-y-4 animate-in slide-in-from-right-8">
       <div className="flex bg-[#E0E0D9] p-1 rounded-xl mb-2"><button onClick={() => setTab('list')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition ${tab === 'list' ? 'bg-white shadow text-[#77ABC0]' : 'text-[#C5B8BF]'}`}>庫存清單</button><button onClick={() => setTab('calculator')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition ${tab === 'calculator' ? 'bg-white shadow text-[#77ABC0]' : 'text-[#C5B8BF]'}`}>補貨計算</button></div>
       {tab === 'list' ? (
         <div className="space-y-3">
+          {/* ... Add New Alcohol Button ... */}
           {role.alcohol && <button onClick={() => { setEditingId(null); setNewAlcohol({ name: '', type: '威士忌', level: 100, rating: 5, note: '', comments: [] }); setShowAdd(true); }} className="w-full py-3 text-[#CBABCA] font-bold text-xs flex items-center justify-center gap-1 border border-dashed border-[#CBABCA] rounded-2xl hover:bg-[#FFF5F7]"><Plus size={14}/> 新增酒品</button>}
+          
+          {/* ... Add Form ... */}
           {showAdd && (<div className="bg-white p-4 rounded-[24px] border border-[#77ABC0] space-y-3"><input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="酒名" value={newAlcohol.name} onChange={e=>setNewAlcohol({...newAlcohol, name: e.target.value})} /><select className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" value={newAlcohol.type} onChange={e=>setNewAlcohol({...newAlcohol, type: e.target.value})}>{alcoholOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}</select>{newAlcohol.type === '其他' && <input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="輸入自訂種類" value={customType} onChange={e=>setCustomType(e.target.value)} />}<div className="flex items-center gap-2 text-xs text-[#C5B8BF]"><span>剩餘量: {newAlcohol.level}%</span><input type="range" min="0" max="100" className="flex-1" value={newAlcohol.level} onChange={e=>setNewAlcohol({...newAlcohol, level: e.target.value})} /></div><input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="備註..." value={newAlcohol.note} onChange={e=>setNewAlcohol({...newAlcohol, note: e.target.value})} /><div className="flex gap-2"><button onClick={() => setShowAdd(false)} className="flex-1 p-2 text-xs text-slate-400">取消</button><button onClick={handleSave} className="flex-1 p-2 bg-[#77ABC0] text-white rounded-lg text-xs font-bold">儲存</button></div></div>)}
+          
+          {/* Alcohol List */}
           {safeAlcohols.map(a => (
             <div key={a.id} className="bg-white p-5 rounded-[28px] border border-[#E0E0D9] shadow-sm flex flex-col gap-3 relative group">
                <div className="flex gap-4 items-start">
@@ -1097,7 +1156,55 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
                   <div className="flex-1" onClick={() => role.alcohol && handleEdit(a)}><h3 className="font-bold text-lg text-[#725E77]">{a.name}</h3><p className="text-xs font-bold text-[#8B8C89] mb-1">{a.type}</p><div className="w-full h-1.5 bg-[#F0F4F5] rounded-full overflow-hidden mb-2"><div className="h-full bg-[#D6C592]" style={{width: `${a.level}%`}}></div></div><div className="text-xs text-[#6E7F9B]">{a.note}</div></div>
                   {role.alcohol && <button onClick={() => handleDelete(a.id)} className="text-[#BC8F8F] opacity-0 group-hover:opacity-100 transition"><Trash2 size={16}/></button>}
                </div>
-               <div className="pt-2 border-t border-[#F0F4F5]">{(a.comments || []).map((c, idx) => (<div key={idx} className="text-[10px] text-[#6E7F9B] mb-1 flex justify-between items-start group/comment"><span><span className="font-bold">{c.user}:</span> {c.text}</span>{(c.uid === user.uid || role.admin) && <button onClick={() => handleDeleteComment(a.id, idx, a.comments)} className="text-[#BC8F8F] opacity-0 group-hover/comment:opacity-100"><Trash2 size={10}/></button>}</div>))}<div className="flex gap-2 mt-2"><input className="w-full bg-[#FDFBF7] p-1.5 rounded-lg text-xs outline-none" placeholder="寫下品飲心得..." onKeyDown={e=>{if(e.key==='Enter'){handleAddComment(a.id, e.target.value, a.comments); e.target.value=''}}} /></div></div>
+               
+               <div className="pt-2 border-t border-[#F0F4F5]">
+                  {(a.comments || []).map((c, idx) => (
+                      <div key={idx} className="mb-2 group/comment">
+                          {/* 判斷是否處於編輯模式 */}
+                          {editingComment.alcoholId === a.id && editingComment.index === idx ? (
+                              <div className="flex gap-2 items-center bg-[#F0F4F5] p-2 rounded-lg">
+                                  <input 
+                                    className="w-full bg-transparent text-sm text-[#725E77] outline-none" 
+                                    value={editingComment.text} 
+                                    autoFocus
+                                    onChange={(e) => setEditingComment({...editingComment, text: e.target.value})}
+                                    onKeyDown={(e) => { if(e.key === 'Enter') saveEditedComment(); else if(e.key === 'Escape') setEditingComment({ alcoholId: null, index: null, text: '' }); }}
+                                  />
+                                  <button onClick={saveEditedComment} className="text-[#77ABC0] hover:bg-white p-1 rounded"><Check size={16}/></button>
+                                  <button onClick={() => setEditingComment({ alcoholId: null, index: null, text: '' })} className="text-[#BC8F8F] hover:bg-white p-1 rounded"><X size={16}/></button>
+                              </div>
+                          ) : (
+                              <div className="text-sm text-[#6E7F9B] flex justify-between items-start">
+                                  <span className="leading-snug"><span className="font-bold text-[#725E77]">{c.user}:</span> {c.text}</span>
+                                  {(c.uid === user.uid || role.admin) && (
+                                      <div className="flex gap-1 opacity-0 group-hover/comment:opacity-100 transition-opacity">
+                                          <button onClick={() => startEditComment(a.id, idx, c.text)} className="text-[#77ABC0] p-0.5"><Pencil size={12}/></button>
+                                          <button onClick={() => handleDeleteComment(a.id, idx)} className="text-[#BC8F8F] p-0.5"><Trash2 size={12}/></button>
+                                      </div>
+                                  )}
+                              </div>
+                          )}
+                      </div>
+                  ))}
+                  
+                  {/* 新增留言區塊 - 放大並加上確認鍵 */}
+                  <div className="flex gap-2 mt-3 items-center">
+                    <input 
+                      className="w-full bg-[#FDFBF7] p-2 rounded-xl text-sm outline-none border border-transparent focus:border-[#77ABC0]/30 transition" 
+                      placeholder="寫下品飲心得..." 
+                      value={newCommentMap[a.id] || ''}
+                      onChange={(e) => setNewCommentMap({ ...newCommentMap, [a.id]: e.target.value })}
+                      onKeyDown={(e) => e.key === 'Enter' && handleAddComment(a.id)}
+                    />
+                    <button 
+                      onClick={() => handleAddComment(a.id)} 
+                      className={`p-2 rounded-xl transition ${newCommentMap[a.id] ? 'bg-[#77ABC0] text-white shadow-md' : 'bg-[#F0F4F5] text-[#C5B8BF]'}`}
+                      disabled={!newCommentMap[a.id]}
+                    >
+                      <ArrowRight size={18} />
+                    </button>
+                  </div>
+               </div>
             </div>
           ))}
         </div>
