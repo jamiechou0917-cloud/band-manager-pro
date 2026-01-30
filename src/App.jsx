@@ -12,7 +12,7 @@ import {
   PartyPopper, Headphones, Speaker, Star, Image as ImageIcon, Disc,
   Ghost, Pencil, Trash2, Lock, Save, MinusCircle, FilePlus, AlertTriangle,
   Database, Download, Filter, Search, Clock, CheckSquare,
-  User 
+  User, StickyNote
 } from 'lucide-react';
 
 // ==========================================
@@ -52,6 +52,13 @@ const BAND_NAME = "不開玩笑";
 const BAND_LOGO_BASE64 = ""; 
 const BAND_LOGO_URL = ""; 
 const MORANDI_COLORS = ['#8C736F', '#AAB8AB', '#B7B7BD', '#CCD2CC', '#9F8D8B', '#8FA39A'];
+
+// 時間選單生成器 (08:00 - 23:30)
+const TIME_SLOTS = [];
+for (let i = 8; i < 24; i++) {
+  const h = i.toString().padStart(2, '0');
+  TIME_SLOTS.push(`${h}:00`, `${h}:30`);
+}
 
 const stringToColor = (str) => {
   if (!str) return MORANDI_COLORS[0];
@@ -390,9 +397,6 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
   const [expandedMember, setExpandedMember] = useState(null);
   const [editingMember, setEditingMember] = useState(null); 
   
-  // 🔥🔥🔥 關鍵修復：這裡加入了 useEffect 來監聽雲端資料變化 🔥🔥🔥
-  // 這會確保當 generalData.practices 更新時（例如手機端修改了），本地端狀態也會跟著更新。
-  // 但是，如果正在編輯中 (editingPractice 為 true)，我們暫時不同步，以免打斷輸入。
   useEffect(() => {
     if (!editingPractice && generalData.practices) {
       setPractices(generalData.practices);
@@ -401,7 +405,6 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
 
   const now = new Date();
   
-  // 安全的日期排序 (防呆修正)
   const sortedPractices = [...practices]
     .filter(p => p && p.date) 
     .map(p => ({...p, dateObj: new Date(p.date), endObj: p.endTime ? new Date(p.endTime) : new Date(new Date(p.date).getTime() + 2*60*60*1000) }))
@@ -433,11 +436,19 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
   const handleSaveMember = async (data) => { if (!db) return; data.id ? await updateDoc(getDocRef(db, 'members', data.id), data) : await addDoc(getCollectionRef(db, 'members'), data); setEditingMember(null); };
   const handleDeleteMember = async (id) => { if (confirm("確定要刪除這位團員嗎？")) { await deleteDoc(getDocRef(db, 'members', id)); } };
   
-  const addToCalendarUrl = () => {
-    if (!isValidDate) return "#";
-    const start = nextDateObj.toISOString().replace(/-|:|\.\d\d\d/g, "");
-    const end = nextPractice.endTime ? new Date(nextPractice.endTime).toISOString().replace(/-|:|\.\d\d\d/g, "") : new Date(nextDateObj.getTime() + 2*60*60*1000).toISOString().replace(/-|:|\.\d\d\d/g, "");
-    return `https://www.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(nextPractice.title)}&dates=${start}/${end}&location=${encodeURIComponent(nextPractice.location)}`;
+  // 萬用的加入行事曆連結產生器 (支援所有場次)
+  const generateCalendarUrl = (p) => {
+    if (!p || !p.date) return "#";
+    const startDate = new Date(p.date);
+    // 結束時間如果沒設定，預設為開始時間+2小時
+    const endDate = p.endTime ? new Date(p.endTime) : new Date(startDate.getTime() + 2*60*60*1000);
+    
+    // 產生 Google Calendar 要求的 YYYYMMDDTHHmmss 格式
+    const format = (d) => d.toISOString().replace(/-|:|\.\d\d\d/g, "");
+    
+    const details = `${p.targetSongs ? '🎵 預計曲目: ' + p.targetSongs : ''}${p.memo ? '\n📝 備註: ' + p.memo : ''}`;
+    
+    return `https://www.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(p.title)}&dates=${format(startDate)}/${format(endDate)}&location=${encodeURIComponent(p.location || '')}&details=${encodeURIComponent(details)}`;
   };
 
   const renderPracticeEditor = () => (
@@ -445,27 +456,72 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
       <div className="bg-white p-6 rounded-3xl w-full max-w-sm space-y-4 max-h-[80vh] overflow-y-auto">
         <h3 className="font-bold text-lg text-[#725E77]">設定本月練團時間</h3>
         <p className="text-xs text-slate-400">請一次規劃好本月的場次，日誌會自動連動。</p>
-        {practices.map((p, idx) => (
-          <div key={idx} className="bg-[#FDFBF7] p-3 rounded-xl border border-[#E0E0D9] space-y-2 relative">
-             <button onClick={() => setPractices(practices.filter((_, i) => i !== idx))} className="absolute top-2 right-2 text-[#BC8F8F]"><MinusCircle size={16}/></button>
-             <div className="text-xs text-[#C5B8BF] font-bold">開始</div>
-             <input type="datetime-local" className="w-full bg-white p-2 rounded-lg text-sm" value={p.date} onChange={e => {
-               const newP = [...practices]; newP[idx].date = e.target.value; setPractices(newP);
-             }} />
-             <div className="text-xs text-[#C5B8BF] font-bold">結束</div>
-             <input type="datetime-local" className="w-full bg-white p-2 rounded-lg text-sm" value={p.endTime || ''} onChange={e => {
-               const newP = [...practices]; newP[idx].endTime = e.target.value; setPractices(newP);
-             }} />
-             <input type="text" className="w-full bg-white p-2 rounded-lg text-sm" placeholder="標題" value={p.title} onChange={e => {
-               const newP = [...practices]; newP[idx].title = e.target.value; setPractices(newP);
-             }} />
-             <input type="text" className="w-full bg-white p-2 rounded-lg text-sm" placeholder="地點" value={p.location} onChange={e => {
-               const newP = [...practices]; newP[idx].location = e.target.value; setPractices(newP);
-             }} />
-          </div>
-        ))}
-        <button onClick={() => setPractices([...practices, { date: new Date().toISOString(), endTime: '', title: '新練團', location: '圓頭音樂' }])} className="w-full py-2 border-2 border-dashed border-[#77ABC0] text-[#77ABC0] rounded-xl font-bold flex justify-center items-center gap-1"><Plus size={16}/> 增加場次</button>
-        <div className="flex gap-2 pt-2"><button onClick={() => setEditingPractice(false)} className="flex-1 p-3 rounded-xl text-slate-400 font-bold">取消</button><button onClick={handleUpdatePractices} className="flex-1 p-3 rounded-xl bg-[#77ABC0] text-white font-bold shadow-lg">儲存設定</button></div>
+        {practices.map((p, idx) => {
+          // 拆解 ISO 日期字串給編輯器使用
+          const dateStr = p.date ? p.date.split('T')[0] : '';
+          const startTimeStr = p.date && p.date.includes('T') ? p.date.split('T')[1].substring(0, 5) : '20:00';
+          const endTimeStr = p.endTime && p.endTime.includes('T') ? p.endTime.split('T')[1].substring(0, 5) : '22:00';
+          
+          // 更新日期的輔助函式
+          const updateTime = (newDate, newTime, isEnd = false) => {
+             const combined = `${newDate}T${newTime}`;
+             const newP = [...practices];
+             if (isEnd) newP[idx].endTime = combined;
+             else newP[idx].date = combined;
+             setPractices(newP);
+          };
+
+          return (
+            <div key={idx} className="bg-[#FDFBF7] p-4 rounded-xl border border-[#E0E0D9] space-y-3 relative">
+               <button onClick={() => setPractices(practices.filter((_, i) => i !== idx))} className="absolute top-2 right-2 text-[#BC8F8F] hover:text-red-500"><MinusCircle size={18}/></button>
+               
+               <div className="grid grid-cols-1 gap-2">
+                 <div>
+                    <label className="text-[10px] font-bold text-[#C5B8BF] mb-1 block uppercase">日期</label>
+                    <input type="date" className="w-full bg-white p-2 rounded-lg text-sm border border-transparent focus:border-[#77ABC0] outline-none" value={dateStr} onChange={e => {
+                      updateTime(e.target.value, startTimeStr);
+                      // 同步更新結束日期的日期部分，保持同一天
+                      const currentEndTime = p.endTime ? p.endTime.split('T')[1].substring(0, 5) : '22:00';
+                      const newP = [...practices];
+                      newP[idx].date = `${e.target.value}T${startTimeStr}`; // 先更新 state 以防閉包問題
+                      newP[idx].endTime = `${e.target.value}T${currentEndTime}`;
+                      setPractices(newP);
+                    }} />
+                 </div>
+               </div>
+
+               <div className="grid grid-cols-2 gap-2">
+                 <div>
+                    <label className="text-[10px] font-bold text-[#C5B8BF] mb-1 block uppercase">開始時間</label>
+                    <select className="w-full bg-white p-2 rounded-lg text-sm appearance-none outline-none" value={startTimeStr} onChange={e => updateTime(dateStr, e.target.value)}>
+                      {TIME_SLOTS.map(t => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                 </div>
+                 <div>
+                    <label className="text-[10px] font-bold text-[#C5B8BF] mb-1 block uppercase">結束時間</label>
+                    <select className="w-full bg-white p-2 rounded-lg text-sm appearance-none outline-none" value={endTimeStr} onChange={e => updateTime(dateStr, e.target.value, true)}>
+                      {TIME_SLOTS.map(t => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                 </div>
+               </div>
+
+               <input type="text" className="w-full bg-white p-2 rounded-lg text-sm" placeholder="標題 (預設: 練團)" value={p.title} onChange={e => {
+                 const newP = [...practices]; newP[idx].title = e.target.value; setPractices(newP);
+               }} />
+               <input type="text" className="w-full bg-white p-2 rounded-lg text-sm" placeholder="地點 (預設: 圓頭音樂)" value={p.location} onChange={e => {
+                 const newP = [...practices]; newP[idx].location = e.target.value; setPractices(newP);
+               }} />
+               <input type="text" className="w-full bg-white p-2 rounded-lg text-sm border-t-2 border-[#E0E0D9] pt-2 mt-1" placeholder="🎵 預計曲目 (Ex: Last Dance...)" value={p.targetSongs || ''} onChange={e => {
+                 const newP = [...practices]; newP[idx].targetSongs = e.target.value; setPractices(newP);
+               }} />
+               <input type="text" className="w-full bg-white p-2 rounded-lg text-sm" placeholder="📝 備註 (Ex: 記得帶譜)" value={p.memo || ''} onChange={e => {
+                 const newP = [...practices]; newP[idx].memo = e.target.value; setPractices(newP);
+               }} />
+            </div>
+          );
+        })}
+        <button onClick={() => setPractices([...practices, { date: new Date().toISOString().split('T')[0] + 'T20:00', endTime: new Date().toISOString().split('T')[0] + 'T22:00', title: '練團', location: '圓頭音樂' }])} className="w-full py-3 border-2 border-dashed border-[#77ABC0] text-[#77ABC0] rounded-xl font-bold flex justify-center items-center gap-1 hover:bg-[#F0F8FF] transition"><Plus size={16}/> 增加場次</button>
+        <div className="flex gap-2 pt-2"><button onClick={() => setEditingPractice(false)} className="flex-1 p-3 rounded-xl text-slate-400 font-bold hover:bg-slate-100 transition">取消</button><button onClick={handleUpdatePractices} className="flex-1 p-3 rounded-xl bg-[#77ABC0] text-white font-bold shadow-lg hover:bg-[#6699af] transition">儲存設定</button></div>
       </div>
     </div>
   );
@@ -481,7 +537,7 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
             <h2 className="text-xl font-black text-[#E0E7EA] uppercase tracking-widest drop-shadow-md">{isValidDate ? nextPractice.title : "無練團安排"}</h2>
             <div className="flex gap-2">
               {role.admin && <button onClick={() => setEditingPractice(true)} className="bg-white/20 p-2 rounded-full backdrop-blur-sm hover:bg-white/40"><Pencil size={18}/></button>}
-              <a href={addToCalendarUrl()} target="_blank" className="bg-white/20 hover:bg-white/30 p-2 rounded-full backdrop-blur-sm transition active:scale-95"><CalendarPlus size={18} className="text-white"/></a>
+              <a href={generateCalendarUrl(nextPractice)} target="_blank" className="bg-white/20 hover:bg-white/30 p-2 rounded-full backdrop-blur-sm transition active:scale-95"><CalendarPlus size={18} className="text-white"/></a>
             </div>
           </div>
           <div className="text-4xl font-black mb-1 font-mono tracking-tight drop-shadow-md">
@@ -493,6 +549,15 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
               ? `${nextDateObj.toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute:'2-digit' })} ${nextPractice.endTime ? `- ${new Date(nextPractice.endTime).toLocaleTimeString('zh-TW', { hour: '2-digit', minute:'2-digit' })}` : ''}`
               : "時間未定"}
           </div>
+          
+          {/* 新增：顯示下一場的預計曲目 */}
+          {isValidDate && nextPractice.targetSongs && (
+             <div className="mb-3 text-sm bg-white/10 p-2 rounded-lg backdrop-blur-sm border border-white/10 text-[#E0E7EA]">
+                <div className="text-[10px] opacity-70 mb-0.5 uppercase tracking-wider font-bold">Target Songs</div>
+                <div className="font-bold flex items-center gap-1"><Music2 size={12}/> {nextPractice.targetSongs}</div>
+             </div>
+          )}
+
           <div className="flex items-center gap-2 bg-black/20 w-fit px-4 py-2 rounded-full backdrop-blur-sm border border-white/10"><MapPin size={16} className="text-[#E0E7EA]"/><span className="text-sm font-bold">{nextPractice.location}</span></div>
         </div>
         <PartyPopper className="absolute -right-4 -bottom-4 text-white opacity-10 rotate-12" size={140} />
@@ -502,11 +567,16 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
          <div className="font-bold text-[#725E77] mb-2 flex items-center gap-2"><Calendar size={18}/> 本月場次列表</div>
          <div className="space-y-2">
             {sortedPractices.map(p => (
-               <div key={p.date} className="flex justify-between items-center text-sm p-2 bg-slate-50 rounded-lg">
-                  <div>
-                      <div className="font-bold text-slate-700">{new Date(p.date).toLocaleDateString()} {p.title}</div>
-                      <div className="text-xs text-slate-400">{new Date(p.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} @ {p.location}</div>
+               <div key={p.date} className="flex justify-between items-start text-sm p-3 bg-slate-50 rounded-xl border border-slate-100">
+                  <div className="flex-1">
+                      <div className="font-bold text-slate-700 text-base mb-0.5">{new Date(p.date).toLocaleDateString()} {p.title}</div>
+                      <div className="text-xs text-slate-400 font-bold mb-1">{new Date(p.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} - {p.endTime ? new Date(p.endTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '??'} @ {p.location}</div>
+                      {p.memo && <div className="text-xs text-[#77ABC0] bg-[#77ABC0]/10 px-2 py-1 rounded w-fit mt-1 flex items-center gap-1"><StickyNote size={10}/> {p.memo}</div>}
                   </div>
+                  {/* 新增：每一行的加入行事曆按鈕 */}
+                  <a href={generateCalendarUrl(p)} target="_blank" className="p-2 text-[#C5B8BF] hover:text-[#77ABC0] hover:bg-[#77ABC0]/10 rounded-lg transition" title="加入行事曆">
+                     <CalendarPlus size={18}/>
+                  </a>
                </div>
             ))}
             {sortedPractices.length === 0 && <div className="text-xs text-slate-400 text-center py-2">本月尚無安排</div>}
