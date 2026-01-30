@@ -579,6 +579,7 @@ const DashboardView = ({ members, generalData, alcoholCount, db, role, user }) =
                       <div className="text-xs text-slate-400 font-bold mb-1">{new Date(p.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} - {p.endTime ? new Date(p.endTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '??'} @ {p.location}</div>
                       {p.memo && <div className="text-xs text-[#77ABC0] bg-[#77ABC0]/10 px-2 py-1 rounded w-fit mt-1 flex items-center gap-1"><StickyNote size={10}/> {p.memo}</div>}
                   </div>
+                  {/* 新增：每一行的加入行事曆按鈕 */}
                   <a href={generateCalendarUrl(p)} target="_blank" className="p-2 text-[#C5B8BF] hover:text-[#77ABC0] hover:bg-[#77ABC0]/10 rounded-lg transition" title="加入行事曆">
                      <CalendarPlus size={18}/>
                   </a>
@@ -658,9 +659,11 @@ const MemberEditModal = ({ member, onClose, onSave }) => {
 // --- 2. 日誌管理器 ---
 const SessionLogManager = ({ sessions, practices = [], members, settings, db, appId, role, user }) => {
   const [activeSessionId, setActiveSessionId] = useState(null);
-  const existingDates = sessions.map(s => s.date);
+  // 🛡️ 強力防呆：如果 sessions 是 null，轉為空陣列 []
+  const safeSessions = Array.isArray(sessions) ? sessions : [];
+  const existingDates = safeSessions.map(s => s.date);
   
-  // 🛡️ 防呆：確保 practices 不為 null 且為陣列
+  // 🛡️ 強力防呆：確保 practices 是陣列
   const pendingPractices = (Array.isArray(practices) ? practices : []).filter(p => {
       if(!p || !p.date) return false;
       const pDate = p.date.split('T')[0];
@@ -687,7 +690,7 @@ const SessionLogManager = ({ sessions, practices = [], members, settings, db, ap
   };
 
   if (activeSessionId) {
-    const session = sessions.find(s => s.id === activeSessionId);
+    const session = safeSessions.find(s => s.id === activeSessionId);
     if (!session) return <div className="p-10 text-center text-[#CBABCA]">正在同步...</div>;
     return <SessionDetail session={session} members={members} settings={settings} onBack={() => setActiveSessionId(null)} db={db} role={role} user={user} />;
   }
@@ -723,7 +726,7 @@ const SessionLogManager = ({ sessions, practices = [], members, settings, db, ap
         </div>
       )}
 
-      {sessions.map(s => (
+      {safeSessions.map(s => (
         <div key={s.id} onClick={() => setActiveSessionId(s.id)} className="bg-white p-5 rounded-[28px] shadow-sm border border-[#E0E0D9] cursor-pointer hover:border-[#77ABC0]/50 transition relative group">
           <div className="flex justify-between items-start mb-2">
             <div><span className="bg-[#A8D8E2]/20 text-[#6E7F9B] text-[10px] font-bold px-2 py-0.5 rounded border border-[#A8D8E2]/30">{s.date}</span><h3 className="font-bold text-xl mt-1 text-[#725E77]">{s.tracks?.length || 0} 首歌</h3></div>
@@ -800,7 +803,8 @@ const TrackList = ({ session, db, user, role }) => {
   const [expandedTrack, setExpandedTrack] = useState(null);
   const [newTrackName, setNewTrackName] = useState("");
   const [newComment, setNewComment] = useState("");
-  const tracks = session.tracks || [];
+  // 🛡️ 強力防呆：確保 session.tracks 是陣列
+  const tracks = Array.isArray(session.tracks) ? session.tracks : [];
   const auth = getAuth();
   const currentUser = auth.currentUser;
 
@@ -961,7 +965,10 @@ const AlcoholManager = ({ alcohols, members, settings, db, role, user }) => {
   const [showAdd, setShowAdd] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [customType, setCustomType] = useState("");
+  // 🛡️ 強力防呆：確保 alcoholTypes 是陣列
   const alcoholOptions = Array.isArray(settings?.alcoholTypes) ? settings.alcoholTypes : ['紅酒', '白酒', '清酒', '氣泡酒', '啤酒', '威士忌', '其他'];
+  // 🛡️ 強力防呆：確保 alcohols 是陣列
+  const safeAlcohols = Array.isArray(alcohols) ? alcohols : [];
 
   const handleSave = async () => { if (!newAlcohol.name || !db) return; const finalType = newAlcohol.type === '其他' ? customType : newAlcohol.type; const data = { ...newAlcohol, type: finalType }; if (editingId) await updateDoc(getDocRef(db, 'alcohol', editingId), data); else await addDoc(getCollectionRef(db, 'alcohol'), data); setShowAdd(false); setEditingId(null); setNewAlcohol({ name: '', type: '威士忌', level: 100, rating: 5, note: '', comments: [] }); };
   const handleDelete = async (id) => { if (!db || !confirm("確定刪除此酒品？")) return; await deleteDoc(getDocRef(db, 'alcohol', id)); };
@@ -976,7 +983,7 @@ const AlcoholManager = ({ alcohols, members, settings, db, role, user }) => {
         <div className="space-y-3">
           {role.alcohol && <button onClick={() => { setEditingId(null); setNewAlcohol({ name: '', type: '威士忌', level: 100, rating: 5, note: '', comments: [] }); setShowAdd(true); }} className="w-full py-3 text-[#CBABCA] font-bold text-xs flex items-center justify-center gap-1 border border-dashed border-[#CBABCA] rounded-2xl hover:bg-[#FFF5F7]"><Plus size={14}/> 新增酒品</button>}
           {showAdd && (<div className="bg-white p-4 rounded-[24px] border border-[#77ABC0] space-y-3"><input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="酒名" value={newAlcohol.name} onChange={e=>setNewAlcohol({...newAlcohol, name: e.target.value})} /><select className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" value={newAlcohol.type} onChange={e=>setNewAlcohol({...newAlcohol, type: e.target.value})}>{alcoholOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}</select>{newAlcohol.type === '其他' && <input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="輸入自訂種類" value={customType} onChange={e=>setCustomType(e.target.value)} />}<div className="flex items-center gap-2 text-xs text-[#C5B8BF]"><span>剩餘量: {newAlcohol.level}%</span><input type="range" min="0" max="100" className="flex-1" value={newAlcohol.level} onChange={e=>setNewAlcohol({...newAlcohol, level: e.target.value})} /></div><input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="備註..." value={newAlcohol.note} onChange={e=>setNewAlcohol({...newAlcohol, note: e.target.value})} /><div className="flex gap-2"><button onClick={() => setShowAdd(false)} className="flex-1 p-2 text-xs text-slate-400">取消</button><button onClick={handleSave} className="flex-1 p-2 bg-[#77ABC0] text-white rounded-lg text-xs font-bold">儲存</button></div></div>)}
-          {alcohols.map(a => (
+          {safeAlcohols.map(a => (
             <div key={a.id} className="bg-white p-5 rounded-[28px] border border-[#E0E0D9] shadow-sm flex flex-col gap-3 relative group">
                <div className="flex gap-4 items-start">
                   <div className="bg-[#F0EEE6] w-16 h-20 rounded-2xl flex items-center justify-center shrink-0"><Wine className="text-[#D6C592]" size={32} /></div>
@@ -998,8 +1005,10 @@ const TechView = ({ songs, db, role, user }) => {
   const [filter, setFilter] = useState('all'); 
   const [showAdd, setShowAdd] = useState(false);
   const [newSong, setNewSong] = useState({ title: '', artist: '', link: '', type: 'cover' });
+  // 🛡️ 強力防呆：確保 songs 是陣列
+  const safeSongs = Array.isArray(songs) ? songs : [];
   // 🛡️ 防呆：確保 s.type 存在才執行 toLowerCase
-  const filteredSongs = filter === 'all' ? songs : songs.filter(s => String(s.type || 'cover').toLowerCase() === filter);
+  const filteredSongs = filter === 'all' ? safeSongs : safeSongs.filter(s => String(s.type || 'cover').toLowerCase() === filter);
   const handleAdd = async () => { if (!newSong.title || !db) return; await addDoc(getCollectionRef(db, 'songs'), { ...newSong, user: user.displayName, uid: user.uid }); setShowAdd(false); setNewSong({ title: '', artist: '', link: '', type: 'cover' }); };
   const handleDelete = async (id) => { if (!db || !confirm("刪除此資源？")) return; await deleteDoc(getDocRef(db, 'songs', id)); };
 
@@ -1016,11 +1025,15 @@ const TechView = ({ songs, db, role, user }) => {
 
 const AdminDashboard = ({ members, logs, generalData, db }) => {
   const [tab, setTab] = useState('members');
-  // 🛡️ 防呆：確保 alcoholTypes 為陣列
+  // 🛡️ 強力防呆：確保 alcoholTypes 為陣列
   const [alcoholTypes, setAlcoholTypes] = useState(Array.isArray(generalData.settings?.alcoholTypes) ? generalData.settings.alcoholTypes : []);
   const handleUpdateSettings = async () => { await updateDoc(getDocRef(db, 'general', 'info'), { settings: { ...generalData.settings, alcoholTypes } }); alert("設定已更新"); };
   const handleExport = () => { const dataToExport = tab === 'members' ? members : logs; const formattedData = dataToExport.map(item => { if (tab === 'members') return { 暱稱: item.nickname, 本名: item.realName, 樂器: item.instrument, 生日: item.birthday, Email: item.email || '' }; else { const attendeesCount = members.filter(m => m.attendance?.includes(item.date)).length; const trackDetails = item.tracks?.map(t => `${t.title} ${t.comments?.length ? '(' + t.comments.map(c => c.user + ':' + c.text).join('/') + ')' : ''}`).join('; '); return { 日期: item.date, 地點: item.location, 出席人數: attendeesCount, 練習曲目: trackDetails, 備註: item.funNotes }; } }); exportToCSV(formattedData, `Band_${tab}_export.csv`); };
   const handleDelete = async (collectionName, id) => { if (confirm("⚠️ 警告：這將永久刪除此筆資料！確定嗎？")) await deleteDoc(getDocRef(db, collectionName, id)); };
+  
+  // 🛡️ 強力防呆：確保 members 和 logs 是陣列
+  const safeMembers = Array.isArray(members) ? members : [];
+  const safeLogs = Array.isArray(logs) ? logs : [];
 
   return (
     <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 pb-20">
@@ -1029,7 +1042,7 @@ const AdminDashboard = ({ members, logs, generalData, db }) => {
         <div className="flex gap-2 mb-4"><button onClick={() => setTab('members')} className={`px-4 py-2 rounded-xl text-xs font-bold ${tab === 'members' ? 'bg-[#77ABC0] text-white' : 'bg-[#F0F4F5]'}`}>成員</button><button onClick={() => setTab('logs')} className={`px-4 py-2 rounded-xl text-xs font-bold ${tab === 'logs' ? 'bg-[#77ABC0] text-white' : 'bg-[#F0F4F5]'}`}>紀錄</button><button onClick={() => setTab('settings')} className={`px-4 py-2 rounded-xl text-xs font-bold ${tab === 'settings' ? 'bg-[#77ABC0] text-white' : 'bg-[#F0F4F5]'}`}>設定</button></div>
         {tab === 'settings' ? (<div className="space-y-3"><h3 className="font-bold text-[#725E77]">酒櫃分類</h3><textarea className="w-full h-24 p-3 bg-[#FDFBF7] rounded-xl text-xs" value={alcoholTypes.join(',')} onChange={e => setAlcoholTypes(e.target.value.split(','))} /><button onClick={handleUpdateSettings} className="w-full py-2 bg-[#77ABC0] text-white rounded-xl text-xs font-bold">儲存設定</button></div>) : (<button onClick={handleExport} className="w-full py-3 bg-[#E8F1E9] text-[#5F7A61] rounded-xl text-xs font-bold flex items-center justify-center gap-2"><Download size={16}/> 匯出 CSV</button>)}
       </div>
-      {tab !== 'settings' && (<div className="bg-white rounded-[24px] border border-[#E0E0D9] overflow-hidden p-4"><table className="w-full text-left text-xs"><thead><tr><th className="p-2">名稱/日期</th><th className="p-2">詳情</th><th className="p-2 text-right">操作</th></tr></thead><tbody>{(tab === 'members' ? members : logs).map(i => (<tr key={i.id} className="border-t"><td className="p-2 font-bold">{tab === 'members' ? i.nickname : i.date}</td><td className="p-2 text-slate-500">{tab === 'members' ? i.instrument : i.location}</td><td className="p-2 text-right"><button onClick={() => handleDelete(tab === 'members' ? 'members' : 'logs', i.id)} className="text-[#BC8F8F]"><Trash2 size={14}/></button></td></tr>))}</tbody></table></div>)}
+      {tab !== 'settings' && (<div className="bg-white rounded-[24px] border border-[#E0E0D9] overflow-hidden p-4"><table className="w-full text-left text-xs"><thead><tr><th className="p-2">名稱/日期</th><th className="p-2">詳情</th><th className="p-2 text-right">操作</th></tr></thead><tbody>{(tab === 'members' ? safeMembers : safeLogs).map(i => (<tr key={i.id} className="border-t"><td className="p-2 font-bold">{tab === 'members' ? i.nickname : i.date}</td><td className="p-2 text-slate-500">{tab === 'members' ? i.instrument : i.location}</td><td className="p-2 text-right"><button onClick={() => handleDelete(tab === 'members' ? 'members' : 'logs', i.id)} className="text-[#BC8F8F]"><Trash2 size={14}/></button></td></tr>))}</tbody></table></div>)}
     </div>
   );
 };
