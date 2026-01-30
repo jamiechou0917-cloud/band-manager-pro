@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
-// v3.0 核心修正：保留 Popup 登入與儲存降級策略 (解決手機登入)，並修復酒櫃計算機崩潰問題
+// v3.3 修正：修復練團費計算頁面崩潰問題，並清理重複宣告
 import { 
   getAuth, 
   signInWithPopup, 
@@ -174,6 +174,7 @@ try {
   auth = getAuth(app);
   db = getFirestore(app);
   googleProvider = new GoogleAuthProvider();
+  // 強制每次登入都重新選擇帳號
   googleProvider.setCustomParameters({
     prompt: 'select_account'
   });
@@ -218,11 +219,11 @@ const App = () => {
     }
   }, []);
 
-  // Auth 監聽
+  // Auth 監聽 - 強力修復版：儲存策略降級機制 (Persistence Fallback)
   useEffect(() => {
     if (auth) {
       const initAuth = async () => {
-        // 儲存策略降級機制
+        // 嘗試使用 Local Persistence (標準)。如果因為 ITP 失敗，則降級為 Session 或 Memory。
         try {
           await setPersistence(auth, browserLocalPersistence);
         } catch (e) {
@@ -237,9 +238,11 @@ const App = () => {
 
         const unsub = onAuthStateChanged(auth, async (u) => {
            setUser(u);
+           // Canvas 預覽環境專用：自動登入體驗帳號
            if (!u && IS_CANVAS) setTimeout(() => setUser({ uid: 'demo', displayName: '體驗帳號', email: 'demo@test.com' }), 1000);
         });
 
+        // 處理自訂 Token (如果是從外部嵌入)
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
              signInWithCustomToken(auth, __initial_auth_token).catch(e => console.error(e));
         }
@@ -308,6 +311,7 @@ const App = () => {
         }
         setGeneralData(data);
       } else {
+        // ⚠️ 關鍵修復：唯讀初始化，不自動寫入，防止覆蓋資料
         console.log("No general data found, using default for display.");
         setGeneralData(DEFAULT_GENERAL_DATA);
       }
@@ -317,12 +321,17 @@ const App = () => {
     return () => { unsubMembers(); unsubLogs(); unsubAlcohol(); unsubSongs(); unsubRepertoire(); unsubGeneral(); };
   }, [user]);
 
+  // 修正：全面改用 Popup 登入，避免 missing initial state 問題
   const handleLogin = async () => {
     try { 
       await signInWithPopup(auth, googleProvider); 
     } catch (err) { 
       console.error("Popup failed", err);
-      alert("登入發生錯誤。若您使用 iPhone/iPad，請嘗試：\n1. 前往「設定」>「Safari」\n2. 關閉「阻擋跨網站追蹤」\n3. 或改用 Chrome 瀏覽器開啟\n\n(若是 Line/FB 內建瀏覽器，請務必點選「以預設瀏覽器開啟」)");
+      if (err.code === 'auth/popup-blocked' || err.code === 'auth/popup-closed-by-user') {
+          alert("登入彈窗被阻擋。\n\n請點擊「允許彈出式視窗」，或改用 Chrome / Safari 開啟本頁面。");
+      } else {
+          alert("登入錯誤：" + err.message + "\n建議：\n1. 關閉無痕模式\n2. 檢查網路\n3. 如果在 Line/FB 內，請按右下角改用 Safari 開啟");
+      }
     }
   };
   
@@ -351,6 +360,7 @@ const App = () => {
     }
   };
 
+  // 強化版 In-App Browser 阻擋頁面
   if (isInAppBrowser) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center p-8 bg-slate-100 text-center font-sans">
@@ -411,7 +421,7 @@ const App = () => {
           <div className="flex items-center gap-3">
             {showImage ? <img src={BAND_LOGO_BASE64} alt="Logo" className="w-9 h-9 rounded-xl object-contain bg-white shadow-sm" onError={() => setImgError(true)} /> : <BandLogo />}
             <span className="font-bold text-lg tracking-wide text-[#77ABC0]">{BAND_NAME}</span>
-            <span className="text-[9px] bg-[#E8F1E9] text-[#5F7A61] px-1.5 py-0.5 rounded-full font-bold ml-1">v3.0</span>
+            <span className="text-[9px] bg-[#E8F1E9] text-[#5F7A61] px-1.5 py-0.5 rounded-full font-bold ml-1">v3.3</span>
           </div>
           <div className="flex items-center gap-2">
             {role.admin && <span className="bg-rose-100 text-rose-600 text-[10px] px-2 py-0.5 rounded-full font-bold">Admin</span>}
@@ -900,7 +910,6 @@ const TrackList = ({ session, db, user, role, members }) => {
   
   const checkPermission = (commentUid) => {
       if (user?.uid === commentUid || role.admin) return true;
-      alert("只能修改自己的留言喔！");
       return false;
   };
 
@@ -996,9 +1005,10 @@ const TrackList = ({ session, db, user, role, members }) => {
   );
 };
 
-// 🛡️ v3.1 修正：PracticeFeeCalculator 強力防呆，解決未載入完成時的崩潰
-const PracticeFeeCalculator = ({ session, members = [], settings = {}, role, db }) => {
-  const [selectedIds, setSelectedIds] = useState(session.attendance || []); 
+// 🛡️ v3.3 修正：PracticeFeeCalculator 強力防呆
+const PracticeFeeCalculator = ({ session, members = [], settings = {}, role = {}, db }) => { 
+  // Ensure selectedIds is an array
+  const [selectedIds, setSelectedIds] = useState(Array.isArray(session.attendance) ? session.attendance : []); 
   const [hours, setHours] = useState(2);
   const [hasKB, setHasKB] = useState(true);
   
@@ -1032,70 +1042,12 @@ const PracticeFeeCalculator = ({ session, members = [], settings = {}, role, db 
           <div><label className="text-[10px] font-bold text-[#C5B8BF] mb-2 block uppercase">出席確認 (連動日誌設定)</label><div className="flex flex-wrap gap-2">{safeMembers.map(m => (<button key={m.id} onClick={() => setSelectedIds(prev => prev.includes(m.id) ? prev.filter(i => i!==m.id) : [...prev, m.id])} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition ${selectedIds.includes(m.id) ? 'bg-[#A8D8E2]/20 border-[#A8D8E2] text-[#5F8794]' : 'bg-white border-[#E0E0D9] text-[#C5B8BF]'}`}>{m.nickname}</button>))}</div></div>
           <div className="flex gap-2 items-center">
             <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-xs text-[#725E77] border border-transparent focus:border-[#77ABC0] outline-none" value={bankAccount} onChange={(e) => setBankAccount(e.target.value)} disabled={!editingBank} />
-            {(role.admin || role.finance) && !editingBank && <button onClick={()=>setEditingBank(true)}><Pencil size={16} className="text-[#C5B8BF]"/></button>}
+            {/* Access role safely using Optional Chaining */}
+            {(role?.admin || role?.finance) && !editingBank && <button onClick={()=>setEditingBank(true)}><Pencil size={16} className="text-[#C5B8BF]"/></button>}
             {editingBank && <button onClick={handleUpdateBank}><Check size={16} className="text-[#77ABC0]"/></button>}
           </div>
       </div>
       <button onClick={copyText} className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition bg-[#77ABC0] text-white`}>{<Copy size={16}/>} 複製請款文</button>
-    </div>
-  );
-};
-
-// 🛡️ v3.0 修正：AlcoholFeeCalculator 防呆，預設值給好給滿，防止 undefined.map 崩潰
-const AlcoholFeeCalculator = ({ members = [], settings = {} }) => {
-  const [amount, setAmount] = useState('');
-  const [payerId, setPayerId] = useState('');
-  const [splitters, setSplitters] = useState([]);
-  
-  // 雙重保險：確保 members 真的是陣列
-  const safeMembers = Array.isArray(members) ? members : [];
-  
-  const perPerson = splitters.length > 0 ? Math.ceil(parseInt(amount || 0) / splitters.length) : 0;
-  
-  const toggleSplitter = (id) => {
-    if (splitters.includes(id)) setSplitters(splitters.filter(s => s !== id));
-    else setSplitters([...splitters, id]);
-  };
-
-  const copyResult = () => {
-    if (!amount || !payerId || splitters.length === 0) return alert("請完整填寫資訊");
-    const payerName = safeMembers.find(m => m.id === payerId)?.nickname || '未知';
-    const text = `🍺 酒水補貨\n----------------\n💰 總金額：$${amount}\n👑 墊付人：${payerName}\n👥 分攤人：${splitters.map(id => (safeMembers.find(m => m.id === id)?.nickname || '未知')).join('、')}\n----------------\n👉 每人應付：$${perPerson}\n給 ${payerName}`;
-    if(secureCopy(text)) alert("複製成功！");
-  };
-
-  return (
-    <div className="p-4 space-y-6">
-      <div className="bg-white p-5 rounded-[28px] border border-[#E0E0D9] shadow-sm space-y-4">
-        <h3 className="font-bold text-[#725E77] flex items-center gap-2"><Calculator size={20}/> 補貨計算機</h3>
-        <div className="space-y-1">
-           <label className="text-[10px] font-bold text-[#C5B8BF] uppercase">總金額</label>
-           <input type="number" className="w-full bg-[#FDFBF7] p-3 rounded-xl text-lg font-bold text-[#725E77] outline-none" placeholder="$" value={amount} onChange={e => setAmount(e.target.value)} />
-        </div>
-        <div className="space-y-1">
-           <label className="text-[10px] font-bold text-[#C5B8BF] uppercase">誰先墊錢？</label>
-           <div className="flex flex-wrap gap-2">
-             {safeMembers.map(m => (
-               <button key={m.id} onClick={() => setPayerId(m.id)} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition ${payerId === m.id ? 'bg-[#F1CEBA] text-white border-[#F1CEBA]' : 'bg-white text-[#C5B8BF] border-[#E0E0D9]'}`}>{m.nickname}</button>
-             ))}
-           </div>
-        </div>
-        <div className="space-y-1">
-           <label className="text-[10px] font-bold text-[#C5B8BF] uppercase">誰要分攤？</label>
-           <div className="flex flex-wrap gap-2">
-             {safeMembers.map(m => (
-               <button key={m.id} onClick={() => toggleSplitter(m.id)} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition ${splitters.includes(m.id) ? 'bg-[#77ABC0] text-white border-[#77ABC0]' : 'bg-white text-[#C5B8BF] border-[#E0E0D9]'}`}>{m.nickname}</button>
-             ))}
-           </div>
-        </div>
-        {perPerson > 0 && (
-          <div className="bg-[#F0F4F5] p-3 rounded-xl text-center">
-            <div className="text-xs text-[#6E7F9B] mb-1">每人應付</div>
-            <div className="text-2xl font-black text-[#725E77]">${perPerson}</div>
-          </div>
-        )}
-        <button onClick={copyResult} className="w-full py-3 bg-[#77ABC0] text-white rounded-xl font-bold shadow-lg active:scale-95 transition">複製結算結果</button>
-      </div>
     </div>
   );
 };
@@ -1306,6 +1258,7 @@ const TechView = ({ songs = [], db, role, user }) => {
       <div className={viewMode === 'grid' ? "grid grid-cols-2 gap-3" : "space-y-3"}>
         {filteredSongs.map(s => {
             const isEditing = editingSongId === s.id;
+            // 權限判斷：是否顯示編輯按鈕
             const canEdit = role.admin || s.uid === user.uid;
 
             if (isEditing) {
