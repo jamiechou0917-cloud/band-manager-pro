@@ -1308,13 +1308,15 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
       setNewCommentMap({ ...newCommentMap, [id]: '' });
   };
 
+  // 修正：移除 alert 副作用，純粹返回權限狀態
   const checkPermission = (commentUid) => {
       if (user?.uid === commentUid || role.admin) return true;
-      alert("只能修改自己的心得喔！");
+      // alert("只能修改自己的心得喔！"); // 移除此行，避免渲染時瘋狂跳窗
       return false;
   };
 
   const handleDeleteComment = async (alcoholId, comment, commentIdx) => { 
+      // 點擊時的權限保護
       if (!checkPermission(comment.uid)) return;
       if(!confirm("刪除留言？")) return; 
       const alcohol = alcohols.find(a => a.id === alcoholId);
