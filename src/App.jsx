@@ -13,7 +13,8 @@ import {
   browserSessionPersistence, 
   inMemoryPersistence 
 } from 'firebase/auth';
-import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, setDoc, serverTimestamp, writeBatch } from 'firebase/firestore';
+// 修正：引入 arrayUnion, arrayRemove 以進行安全的陣列更新
+import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, setDoc, serverTimestamp, writeBatch, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { 
   Music2, Mic2, Users, ClipboardList, Beer, Calendar, 
   Settings, LogOut, Menu, X, ShieldCheck, Plus, Loader2, 
@@ -219,7 +220,7 @@ const App = () => {
     }
   }, []);
 
-  // Auth 監聽 - 強力修復版：儲存策略降級機制
+  // Auth 監聽
   useEffect(() => {
     if (auth) {
       const initAuth = async () => {
@@ -322,7 +323,6 @@ const App = () => {
     return () => { unsubMembers(); unsubLogs(); unsubAlcohol(); unsubSongs(); unsubRepertoire(); unsubGeneral(); };
   }, [user]);
 
-  // 修正：全面改用 Popup 登入，避免 missing initial state 問題
   const handleLogin = async () => {
     try { 
       await signInWithPopup(auth, googleProvider); 
@@ -420,7 +420,6 @@ const App = () => {
            <h1 className="text-2xl font-black text-[#725E77] mb-2">{BAND_NAME}</h1>
            <div className="space-y-3 w-full">
                <button onClick={handleLogin} className="w-full bg-[#77ABC0] text-white py-4 rounded-2xl font-bold flex items-center justify-center gap-2 shadow-lg active:scale-95 transition"><ShieldCheck size={20}/> Google 登入</button>
-               {/* 新增：修復登入問題按鈕 */}
                <button onClick={handleResetLogin} className="w-full bg-slate-100 text-slate-500 py-3 rounded-2xl font-bold flex items-center justify-center gap-2 text-xs hover:bg-slate-200 transition"><RefreshCw size={14}/> 重置登入狀態 (解決錯誤)</button>
            </div>
            <div className="mt-6 p-3 bg-indigo-50 rounded-xl text-xs text-indigo-800 text-left border border-indigo-100">本系統僅限受邀團員登入。請使用 Safari 或 Chrome 開啟。</div>
@@ -435,7 +434,7 @@ const App = () => {
           <div className="flex items-center gap-3">
             {showImage ? <img src={BAND_LOGO_BASE64} alt="Logo" className="w-9 h-9 rounded-xl object-contain bg-white shadow-sm" onError={() => setImgError(true)} /> : <BandLogo />}
             <span className="font-bold text-lg tracking-wide text-[#77ABC0]">{BAND_NAME}</span>
-            <span className="text-[9px] bg-[#E8F1E9] text-[#5F7A61] px-1.5 py-0.5 rounded-full font-bold ml-1">v4.0</span>
+            <span className="text-[9px] bg-[#E8F1E9] text-[#5F7A61] px-1.5 py-0.5 rounded-full font-bold ml-1">v4.2</span>
           </div>
           <div className="flex items-center gap-2">
             {role.admin && <span className="bg-rose-100 text-rose-600 text-[10px] px-2 py-0.5 rounded-full font-bold">Admin</span>}
@@ -861,9 +860,14 @@ const SessionDetail = ({ session, members, settings, onBack, db, role, user }) =
   const handleUpdateLocation = async () => { if (!db) return; await updateDoc(getDocRef(db, 'logs', session.id), { location }); setEditingLocation(false); };
   
   const toggleSessionAttendance = async (memberId) => {
-      const currentAtt = session.attendance || []; 
-      const newAtt = currentAtt.includes(memberId) ? currentAtt.filter(id => id !== memberId) : [...currentAtt, memberId];
-      await updateDoc(getDocRef(db, 'logs', session.id), { attendance: newAtt });
+      // 修正：使用 arrayUnion/arrayRemove 進行原子更新，避免併發問題
+      const ref = getDocRef(db, 'logs', session.id);
+      const currentAtt = session.attendance || [];
+      if (currentAtt.includes(memberId)) {
+          await updateDoc(ref, { attendance: arrayRemove(memberId) });
+      } else {
+          await updateDoc(ref, { attendance: arrayUnion(memberId) });
+      }
   };
 
   return (
@@ -1044,7 +1048,7 @@ const TrackList = ({ session, db, user, role, members }) => {
   );
 };
 
-// 🛡️ v3.6 修正：PracticeFeeCalculator 強力防呆
+// 🛡️ v4.2 修正：PracticeFeeCalculator 強力防呆與修正未知問題
 const PracticeFeeCalculator = ({ session, members = [], settings = {}, role = {}, db }) => { 
   // Ensure selectedIds is an array
   const [selectedIds, setSelectedIds] = useState(Array.isArray(session.attendance) ? session.attendance : []); 
@@ -1053,6 +1057,13 @@ const PracticeFeeCalculator = ({ session, members = [], settings = {}, role = {}
   
   // 雙重保險：確保 members 真的是陣列
   const safeMembers = Array.isArray(members) ? members : [];
+
+  // ⚡️ 新增：自動同步機制
+  useEffect(() => {
+      if (Array.isArray(session.attendance)) {
+          setSelectedIds(session.attendance);
+      }
+  }, [session.attendance]);
 
   const defaultBank = "(013)國泰世華銀行 帳號：699514620885";
   const [bankAccount, setBankAccount] = useState(settings?.studioBankAccount || defaultBank);
@@ -1067,9 +1078,26 @@ const PracticeFeeCalculator = ({ session, members = [], settings = {}, role = {}
   
   const handleUpdateBank = async () => { if(!db) return; await updateDoc(getDocRef(db, 'general', 'info'), { settings: { ...settings, studioBankAccount: bankAccount } }); setEditingBank(false); };
   
+  const toggleSelection = async (memberId) => {
+      // 修正：使用 arrayUnion/arrayRemove 進行原子更新，避免併發問題
+      const ref = getDocRef(db, 'logs', session.id);
+      if (selectedIds.includes(memberId)) {
+          await updateDoc(ref, { attendance: arrayRemove(memberId) });
+      } else {
+          await updateDoc(ref, { attendance: arrayUnion(memberId) });
+      }
+  };
+
   const copyText = () => { 
-      const names = selectedIds.map(id => (safeMembers.find(m => m.id === id)?.nickname || '未知')).join('、'); 
-      const text = `📅 ${session.date} 練團費用\n----------------\n⏱️ 時數：${hours}hr\n🎹 KB租借：${hasKB?'有':'無'}\n👥 分攤人：${names}\n----------------\n💰 總金額：$${total}\n👉 每人應付：$${perPerson}\n\n匯款帳號：\n${bankAccount}`; 
+      // 🛡️ 修正：過濾掉無效成員，避免顯示「未知」
+      const validNames = selectedIds
+          .map(id => safeMembers.find(m => m.id === id)) // 找成員物件
+          .filter(m => m) // 過濾掉找不到的 (undefined)
+          .map(m => m.nickname); // 取暱稱
+          
+      const namesStr = validNames.length > 0 ? validNames.join('、') : '(無)';
+
+      const text = `📅 ${session.date} 練團費用\n----------------\n⏱️ 時數：${hours}hr\n🎹 KB租借：${hasKB?'有':'無'}\n👥 分攤人：${namesStr}\n----------------\n💰 總金額：$${total}\n👉 每人應付：$${perPerson}\n\n匯款帳號：\n${bankAccount}`; 
       if(secureCopy(text)) alert("複製成功！"); 
   };
 
@@ -1078,7 +1106,11 @@ const PracticeFeeCalculator = ({ session, members = [], settings = {}, role = {}
       <div className="bg-[#F0F4F5] p-4 rounded-2xl text-center border border-[#A8D8E2]/30"><div className="text-3xl font-black text-[#77ABC0] mb-1">${total}</div><div className="text-xs font-bold text-[#6E7F9B]">每人 <span className="text-lg text-[#725E77]">${perPerson}</span></div></div>
       <div className="space-y-3">
           <div className="flex gap-2">{[2, 3].map(h => <button key={h} onClick={() => setHours(h)} className={`flex-1 py-2 rounded-xl text-xs font-bold ${hours === h ? 'bg-[#725E77] text-white' : 'bg-[#FDFBF7] text-[#C5B8BF]'}`}>{h}hr</button>)}<button onClick={() => setHasKB(!hasKB)} className={`flex-1 py-2 rounded-xl text-xs font-bold ${hasKB ? 'bg-[#77ABC0] text-white' : 'bg-[#FDFBF7] text-[#C5B8BF]'}`}>KB {hasKB?'+':'-'}</button></div>
-          <div><label className="text-[10px] font-bold text-[#C5B8BF] mb-2 block uppercase">出席確認 (連動日誌設定)</label><div className="flex flex-wrap gap-2">{safeMembers.map(m => (<button key={m.id} onClick={() => setSelectedIds(prev => prev.includes(m.id) ? prev.filter(i => i!==m.id) : [...prev, m.id])} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition ${selectedIds.includes(m.id) ? 'bg-[#A8D8E2]/20 border-[#A8D8E2] text-[#5F8794]' : 'bg-white border-[#E0E0D9] text-[#C5B8BF]'}`}>{m.nickname}</button>))}</div></div>
+          
+          <div><label className="text-[10px] font-bold text-[#C5B8BF] mb-2 block uppercase">分攤名單 (與日誌同步)</label><div className="flex flex-wrap gap-2">{safeMembers.map(m => (
+              <button key={m.id} onClick={() => toggleSelection(m.id)} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition ${selectedIds.includes(m.id) ? 'bg-[#A8D8E2]/20 border-[#A8D8E2] text-[#5F8794]' : 'bg-white border-[#E0E0D9] text-[#C5B8BF]'}`}>{m.nickname}</button>
+          ))}</div></div>
+
           <div className="flex gap-2 items-center">
             <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-xs text-[#725E77] border border-transparent focus:border-[#77ABC0] outline-none" value={bankAccount} onChange={(e) => setBankAccount(e.target.value)} disabled={!editingBank} />
             {/* Access role safely using Optional Chaining */}
