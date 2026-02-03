@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
-// v4.5 核心修正：練團曲庫 RepertoireManager 升級為多連結架構且權限全開
+// v4.6 核心修正：練團曲庫列表顯示邏輯升級，支援多連結標籤顯示與舊資料相容
 import { 
   getAuth, 
   signInWithPopup, 
@@ -433,7 +433,7 @@ const App = () => {
           <div className="flex items-center gap-3">
             {showImage ? <img src={BAND_LOGO_BASE64} alt="Logo" className="w-9 h-9 rounded-xl object-contain bg-white shadow-sm" onError={() => setImgError(true)} /> : <BandLogo />}
             <span className="font-bold text-lg tracking-wide text-[#77ABC0]">{BAND_NAME}</span>
-            <span className="text-[9px] bg-[#E8F1E9] text-[#5F7A61] px-1.5 py-0.5 rounded-full font-bold ml-1">v4.5</span>
+            <span className="text-[9px] bg-[#E8F1E9] text-[#5F7A61] px-1.5 py-0.5 rounded-full font-bold ml-1">v4.6</span>
           </div>
           <div className="flex items-center gap-2">
             {role.admin && <span className="bg-rose-100 text-rose-600 text-[10px] px-2 py-0.5 rounded-full font-bold">Admin</span>}
@@ -1106,7 +1106,6 @@ const TrackList = ({ session, db, user, role, members }) => {
   );
 };
 
-// 🛡️ v4.2 修正：PracticeFeeCalculator 強力防呆與修正未知問題
 const PracticeFeeCalculator = ({ session, members = [], settings = {}, role = {}, db }) => { 
   // Ensure selectedIds is an array
   const [selectedIds, setSelectedIds] = useState(Array.isArray(session.attendance) ? session.attendance : []); 
@@ -1181,7 +1180,6 @@ const PracticeFeeCalculator = ({ session, members = [], settings = {}, role = {}
   );
 };
 
-// 🛡️ v3.8 修正：MiscFeeCalculator 加入強力防呆，防止未載入完成時崩潰
 const MiscFeeCalculator = ({ session, members = [], db }) => {
   const [items, setItems] = useState(session.miscExpenses || []); 
   const [newItem, setNewItem] = useState({ item: '', amount: '', payerId: '', splitters: [] });
@@ -1221,7 +1219,6 @@ const MiscFeeCalculator = ({ session, members = [], db }) => {
   );
 };
 
-// 🛡️ v3.5 修正：AlcoholFeeCalculator 真·強力防呆，解決未載入完成時的崩潰
 const AlcoholFeeCalculator = ({ members = [], settings = {} }) => {
   const [amount, setAmount] = useState('');
   const [payerId, setPayerId] = useState('');
