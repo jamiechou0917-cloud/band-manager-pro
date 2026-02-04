@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
-// v5.1 核心修正：完整版程式碼，修復截斷錯誤，包含練團曲庫全開、雜支流水帳、備份還原
+// v5.2 核心修正：完整版程式碼，包含雜支流水帳明細、計算機防呆過濾、酒櫃防呆、曲庫全開
 import { 
   getAuth, 
   signInWithPopup, 
@@ -433,7 +433,7 @@ const App = () => {
           <div className="flex items-center gap-3">
             {showImage ? <img src={BAND_LOGO_BASE64} alt="Logo" className="w-9 h-9 rounded-xl object-contain bg-white shadow-sm" onError={() => setImgError(true)} /> : <BandLogo />}
             <span className="font-bold text-lg tracking-wide text-[#77ABC0]">{BAND_NAME}</span>
-            <span className="text-[9px] bg-[#E8F1E9] text-[#5F7A61] px-1.5 py-0.5 rounded-full font-bold ml-1">v5.1</span>
+            <span className="text-[9px] bg-[#E8F1E9] text-[#5F7A61] px-1.5 py-0.5 rounded-full font-bold ml-1">v5.2</span>
           </div>
           <div className="flex items-center gap-2">
             {role.admin && <span className="bg-rose-100 text-rose-600 text-[10px] px-2 py-0.5 rounded-full font-bold">Admin</span>}
