@@ -1196,10 +1196,43 @@ const MiscFeeCalculator = ({ session, members = [], db }) => {
   const handleDelete = (idx) => { if (confirm("刪除此筆雜支？")) handleUpdate(items.filter((_, i) => i !== idx)); };
   const toggleSplitter = (memberId) => { const current = newItem.splitters || []; if (current.includes(memberId)) setNewItem({...newItem, splitters: current.filter(id => id !== memberId)}); else setNewItem({...newItem, splitters: [...current, memberId]}); };
   
+  // v4.8 修正：雜支計算過濾無效成員 (Ghost ID)，確保金額正確且不顯示未知
   const calculateDebt = () => {
-      const balance = {}; items.filter(i => !i.isSettled).forEach(item => { const splitAmount = item.amount / (item.splitters?.length || 1); balance[item.payerId] = (balance[item.payerId] || 0) + parseInt(item.amount); (item.splitters || []).forEach(sid => { balance[sid] = (balance[sid] || 0) - splitAmount; }); });
-      const result = []; Object.keys(balance).forEach(id => { const net = Math.round(balance[id]); if (net < 0) result.push(`${(safeMembers.find(m => m.id === id)?.nickname || '未知')} 應付 $${Math.abs(net)}`); else if (net > 0) result.push(`${(safeMembers.find(m => m.id === id)?.nickname || '未知')} 應收 $${net}`); }); return result;
+      const balance = {}; 
+      items.filter(i => !i.isSettled).forEach(item => { 
+          // 1. 過濾無效分攤人 (只保留在 safeMembers 裡找得到的 ID)
+          const validSplitters = (item.splitters || []).filter(id => safeMembers.some(m => m.id === id));
+          
+          // 如果過濾後沒有分攤人，則跳過此筆 (避免除以 0)
+          if (validSplitters.length === 0) return;
+
+          // 2. 使用有效分攤人數計算金額
+          const splitAmount = item.amount / validSplitters.length; 
+          
+          // 3. 記錄墊付人 (只記錄有效成員，若墊付人已離團則忽略其應收，避免帳目混亂)
+          if (safeMembers.some(m => m.id === item.payerId)) {
+             balance[item.payerId] = (balance[item.payerId] || 0) + parseInt(item.amount); 
+          }
+
+          // 4. 扣除有效分攤人的應付額
+          validSplitters.forEach(sid => { 
+              balance[sid] = (balance[sid] || 0) - splitAmount; 
+          }); 
+      });
+      
+      const result = []; 
+      Object.keys(balance).forEach(id => { 
+          const net = Math.round(balance[id]); 
+          // 5. 顯示前再次確認成員存在
+          const member = safeMembers.find(m => m.id === id);
+          if (!member) return; 
+
+          if (net < 0) result.push(`${member.nickname} 應付 $${Math.abs(net)}`); 
+          else if (net > 0) result.push(`${member.nickname} 應收 $${net}`); 
+      }); 
+      return result;
   };
+
   const copyText = () => { let text = `🍱 ${session.date} 雜支明細\n----------------\n`; items.filter(i => !i.isSettled).forEach(i => { text += `🔹 ${i.item} ($${i.amount}) - 墊付:${(safeMembers.find(m=>m.id===i.payerId)?.nickname || '未知')}\n`; }); secureCopy(text); };
 
   return (
