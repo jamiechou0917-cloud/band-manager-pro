@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
-// v6.1 核心修正：清理重複程式碼、加入日誌/資源/曲庫的「自動收納連結」防呆機制
+// v6.2 核心修正：修復酒櫃「批次進貨」與「盤點模式」儲存沒反應的問題 (修正 Firebase Batch 路徑與加入錯誤捕捉)
 import { 
   getAuth, 
   signInWithPopup, 
@@ -433,7 +433,7 @@ const App = () => {
           <div className="flex items-center gap-3">
             {showImage ? <img src={BAND_LOGO_BASE64} alt="Logo" className="w-9 h-9 rounded-xl object-contain bg-white shadow-sm" onError={() => setImgError(true)} /> : <BandLogo />}
             <span className="font-bold text-lg tracking-wide text-[#77ABC0]">{BAND_NAME}</span>
-            <span className="text-[9px] bg-[#E8F1E9] text-[#5F7A61] px-1.5 py-0.5 rounded-full font-bold ml-1">v6.1</span>
+            <span className="text-[9px] bg-[#E8F1E9] text-[#5F7A61] px-1.5 py-0.5 rounded-full font-bold ml-1">v6.2</span>
           </div>
           <div className="flex items-center gap-2">
             {role.admin && <span className="bg-rose-100 text-rose-600 text-[10px] px-2 py-0.5 rounded-full font-bold">Admin</span>}
@@ -1123,6 +1123,7 @@ const PracticeFeeCalculator = ({ session, members = [], settings = {}, role = {}
   const kbRate = Number(settings?.kbRate) || 200;
 
   const total = (hours * studioRate) + (hasKB ? kbRate : 0);
+  
   const validSelectedIds = selectedIds.filter(id => safeMembers.some(m => m.id === id));
   const perPerson = validSelectedIds.length > 0 ? Math.ceil(total / validSelectedIds.length) : 0;
   
@@ -1138,8 +1139,13 @@ const PracticeFeeCalculator = ({ session, members = [], settings = {}, role = {}
   };
 
   const copyText = () => { 
-      const validNames = validSelectedIds.map(id => safeMembers.find(m => m.id === id)).filter(m => m).map(m => m.nickname); 
+      const validNames = validSelectedIds
+          .map(id => safeMembers.find(m => m.id === id)) 
+          .filter(m => m) 
+          .map(m => m.nickname); 
+          
       const namesStr = validNames.length > 0 ? validNames.join('、') : '(無)';
+
       const text = `📅 ${session.date} 練團費用\n----------------\n⏱️ 時數：${hours}hr\n🎹 KB租借：${hasKB?'有':'無'}\n👥 分攤人：${namesStr}\n----------------\n💰 總金額：$${total}\n👉 每人應付：$${perPerson}\n\n匯款帳號：\n${bankAccount}`; 
       if(secureCopy(text)) alert("複製成功！"); 
   };
@@ -1243,7 +1249,6 @@ const MiscFeeCalculator = ({ session, members = [], db }) => {
       </div>
       <div className="bg-[#E8F1E9] p-3 rounded-xl border border-[#CFE3D1]"><h4 className="text-xs font-bold text-[#5F7A61] mb-2 flex items-center gap-1"><Wallet size={12}/> 結算建議 (未結清項目)</h4><div className="space-y-1">{calculateDebt().map((res, i) => (<div key={i} className="text-xs text-[#5F7A61]">{res}</div>))}{calculateDebt().length === 0 && <div className="text-[10px] text-[#A6B5A7]">無待結算項目</div>}</div></div>
       
-      {/* 新增：詳細流水帳按鈕與顯示區 */}
       <button onClick={() => setShowDetails(!showDetails)} className="w-full py-2 bg-white border border-[#E0E0D9] text-[#C5B8BF] rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-[#FDFBF7]">{showDetails ? '隱藏計算明細' : '查看計算明細'} <FileText size={14}/></button>
       
       {showDetails && (
@@ -1387,24 +1392,31 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
           return;
       }
 
-      const batch = writeBatch(db);
-      validItems.forEach(item => {
-          const finalType = item.type === '其他' ? (item.customType || '其他') : item.type;
-          const docRef = doc(collection(db, 'artifacts', storageAppId, 'public', 'data', 'alcohol')); 
-          batch.set(docRef, {
-              name: item.name,
-              type: finalType,
-              level: parseInt(item.level),
-              note: item.note,
-              date: batchDate, 
-              comments: [],
-              createdAt: serverTimestamp()
+      try {
+          const batch = writeBatch(db);
+          validItems.forEach(item => {
+              const finalType = item.type === '其他' ? (item.customType || '其他') : item.type;
+              // v6.2 Fix: Use proper dynamic path for batch writes
+              const docRef = doc(getCollectionRef(db, 'alcohol')); 
+              batch.set(docRef, {
+                  name: item.name,
+                  type: finalType,
+                  level: parseInt(item.level),
+                  note: item.note,
+                  date: batchDate, 
+                  comments: [],
+                  createdAt: serverTimestamp()
+              });
           });
-      });
 
-      await batch.commit();
-      setShowAdd(false);
-      setBatchItems([{ name: '', type: '啤酒', level: 100, rating: 5, note: '' }]);
+          await batch.commit();
+          setShowAdd(false);
+          setBatchItems([{ name: '', type: '啤酒', level: 100, rating: 5, note: '' }]);
+          alert("✅ 批次進貨成功！");
+      } catch (error) {
+          console.error(error);
+          alert("❌ 儲存失敗：" + error.message);
+      }
   };
 
   const [inventoryState, setInventoryState] = useState({}); 
@@ -1426,23 +1438,30 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
   const saveInventory = async () => {
       if (!db || !confirm("確定儲存盤點結果？未喝完的酒將統一歸入「寄酒/庫存中」。")) return;
 
-      const batch = writeBatch(db);
-      Object.keys(inventoryState).forEach(id => {
-          const state = inventoryState[id];
-          const docRef = doc(db, 'artifacts', storageAppId, 'public', 'data', 'alcohol', id);
-          
-          if (state.toDelete || state.level <= 0) {
-              batch.delete(docRef);
-          } else {
-              batch.update(docRef, { 
-                  level: state.level,
-                  date: 'archived' 
-              });
-          }
-      });
+      try {
+          const batch = writeBatch(db);
+          Object.keys(inventoryState).forEach(id => {
+              const state = inventoryState[id];
+              // v6.2 Fix: Use proper dynamic path for batch writes
+              const docRef = getDocRef(db, 'alcohol', id);
+              
+              if (state.toDelete || state.level <= 0) {
+                  batch.delete(docRef);
+              } else {
+                  batch.update(docRef, { 
+                      level: state.level,
+                      date: 'archived' 
+                  });
+              }
+          });
 
-      await batch.commit();
-      setIsInventoryMode(false);
+          await batch.commit();
+          setIsInventoryMode(false);
+          alert("✅ 盤點完成！");
+      } catch (error) {
+          console.error(error);
+          alert("❌ 盤點失敗：" + error.message);
+      }
   };
 
   const handleDelete = async (id) => { if (!db || !confirm("確定刪除此酒品？")) return; await deleteDoc(getDocRef(db, 'alcohol', id)); };
@@ -1536,6 +1555,7 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
 
       {tab === 'list' ? (
         <div className="space-y-4">
+          {/* 操作按鈕區 */}
           {role.alcohol && !isInventoryMode && (
               <div className="flex gap-2">
                   <button onClick={() => { setShowAdd(!showAdd); setBatchDate(today); setBatchItems([{ name: '', type: '啤酒', level: 100, rating: 5, note: '' }]); }} className="flex-1 py-3 bg-white text-[#77ABC0] font-bold text-xs flex items-center justify-center gap-1 border border-[#77ABC0] rounded-2xl hover:bg-[#F0F4F5] transition"><Plus size={14}/> 批次進貨</button>
@@ -1543,6 +1563,7 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
               </div>
           )}
 
+          {/* 批次新增表單 */}
           {showAdd && !isInventoryMode && (
               <div className="bg-white p-5 rounded-[28px] border-2 border-[#77ABC0] shadow-lg space-y-4 animate-in fade-in slide-in-from-top-4">
                   <div className="flex justify-between items-center">
@@ -1575,6 +1596,7 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
               </div>
           )}
 
+          {/* 盤點模式介面 */}
           {isInventoryMode && (
               <div className="bg-[#FFF9DB] p-5 rounded-[28px] border-2 border-[#D6C592] shadow-lg animate-in fade-in">
                   <div className="flex justify-between items-center mb-4">
@@ -1614,13 +1636,15 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
               </div>
           )}
 
+          {/* 正常顯示模式 (分區顯示) */}
           {!isInventoryMode && (
               <div className="space-y-6">
+                  {/* 今日/未盤點批次 */}
                   {sortedDates.map(date => (
                       <div key={date} className="space-y-3">
                           <div className="flex items-center gap-2 pl-2">
                               <Calendar size={16} className="text-[#77ABC0]"/>
-                              <h3 className="font-bold text-sm text-[#77ABC0] tracking-wider">{date} 新增</h3>
+                              <h3 className="font-bold text-sm text-[#77ABC0] tracking-wider">{date === 'archived' ? '已盤點庫存' : `${date} 新增`}</h3>
                           </div>
                           <div className="grid gap-3">
                               {groupedAlcohols[date].map(renderAlcoholCard)}
@@ -1628,7 +1652,8 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
                       </div>
                   ))}
 
-                  {archivedAlcohols.length > 0 && (
+                  {/* 庫存區 (Archived) */}
+                  {archivedAlcohols.length > 0 && !sortedDates.includes('archived') && (
                       <div className="space-y-3 pt-4 border-t-2 border-dashed border-[#E0E0D9]">
                           <div className="flex items-center gap-2 pl-2">
                               <Archive size={16} className="text-[#D6C592]"/>
@@ -1672,7 +1697,6 @@ const TechView = ({ songs = [], db, role, user }) => {
       if (!newSong.title || !db) return; 
       
       let finalLinks = [...(newSong.links || [])];
-      // v6.1 防呆修正：自動收納尚未點擊 + 號的連結
       if (newLinkUrl.trim()) {
           finalLinks.push({ url: newLinkUrl.trim(), label: newLinkLabel.trim() || '連結' });
       }
@@ -1718,7 +1742,6 @@ const TechView = ({ songs = [], db, role, user }) => {
     if (!editForm.title || !db) return;
     
     let finalLinks = [...(editForm.links || [])];
-    // v6.1 防呆修正：自動收納尚未點擊 + 號的連結
     if (newLinkUrl.trim()) {
         finalLinks.push({ url: newLinkUrl.trim(), label: newLinkLabel.trim() || '連結' });
     }
