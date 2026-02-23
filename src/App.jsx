@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
-// v5.3 核心修正：修復日誌連結無法儲存的問題 (新增自動收納未點擊 + 號的連結邏輯)，並整合新版介面
+// v6.1 核心修正：清理重複程式碼、加入日誌/資源/曲庫的「自動收納連結」防呆機制
 import { 
   getAuth, 
   signInWithPopup, 
@@ -25,7 +25,7 @@ import {
   Ghost, Pencil, Trash2, Lock, Save, MinusCircle, FilePlus, AlertTriangle,
   Database, Download, Filter, Search, Clock, CheckSquare,
   User, StickyNote, ArrowRight, Calculator, Link as LinkIcon, Youtube,
-  BookOpen, FileJson, UploadCloud, Library, Share, ArrowUp, ArrowDown, Wrench, RefreshCw, FileText
+  BookOpen, FileJson, UploadCloud, Library, Share, ArrowUp, ArrowDown, Wrench, RefreshCw, FileText, CheckCircle, Archive
 } from 'lucide-react';
 
 // ==========================================
@@ -433,7 +433,7 @@ const App = () => {
           <div className="flex items-center gap-3">
             {showImage ? <img src={BAND_LOGO_BASE64} alt="Logo" className="w-9 h-9 rounded-xl object-contain bg-white shadow-sm" onError={() => setImgError(true)} /> : <BandLogo />}
             <span className="font-bold text-lg tracking-wide text-[#77ABC0]">{BAND_NAME}</span>
-            <span className="text-[9px] bg-[#E8F1E9] text-[#5F7A61] px-1.5 py-0.5 rounded-full font-bold ml-1">v5.3</span>
+            <span className="text-[9px] bg-[#E8F1E9] text-[#5F7A61] px-1.5 py-0.5 rounded-full font-bold ml-1">v6.1</span>
           </div>
           <div className="flex items-center gap-2">
             {role.admin && <span className="bg-rose-100 text-rose-600 text-[10px] px-2 py-0.5 rounded-full font-bold">Admin</span>}
@@ -913,8 +913,6 @@ const TrackList = ({ session, db, user, role, members }) => {
   const [newLinkLabel, setNewLinkLabel] = useState("");
 
   const tracks = Array.isArray(session.tracks) ? session.tracks : [];
-  const auth = getAuth();
-  const currentUser = auth.currentUser;
 
   const handleAddTrack = async () => { if (!newTrackName.trim() || !db) return; const newTrack = { id: Date.now(), title: newTrackName, status: 'new', links: [], comments: [] }; await updateDoc(getDocRef(db, 'logs', session.id), { tracks: [...tracks, newTrack] }); setNewTrackName(""); };
   
@@ -995,7 +993,7 @@ const TrackList = ({ session, db, user, role, members }) => {
 
   const saveAllLinks = async (trackId) => {
       let finalLinks = [...tempLinks];
-      // v5.3 修正：自動收納尚未點擊 + 號的連結
+      // v6.1 防呆修正：如果使用者填了網址但忘記按 + 號，直接點儲存時自動收納
       if (newLinkUrl.trim()) {
           finalLinks.push({ url: newLinkUrl.trim(), label: newLinkLabel.trim() || "連結" });
       }
@@ -1104,17 +1102,13 @@ const TrackList = ({ session, db, user, role, members }) => {
   );
 };
 
-// 🛡️ v4.2 修正：PracticeFeeCalculator 強力防呆與修正未知問題
 const PracticeFeeCalculator = ({ session, members = [], settings = {}, role = {}, db }) => { 
-  // Ensure selectedIds is an array
   const [selectedIds, setSelectedIds] = useState(Array.isArray(session.attendance) ? session.attendance : []); 
   const [hours, setHours] = useState(2);
   const [hasKB, setHasKB] = useState(true);
   
-  // 雙重保險：確保 members 真的是陣列
   const safeMembers = Array.isArray(members) ? members : [];
 
-  // ⚡️ 新增：自動同步機制
   useEffect(() => {
       if (Array.isArray(session.attendance)) {
           setSelectedIds(session.attendance);
@@ -1125,20 +1119,16 @@ const PracticeFeeCalculator = ({ session, members = [], settings = {}, role = {}
   const [bankAccount, setBankAccount] = useState(settings?.studioBankAccount || defaultBank);
   const [editingBank, setEditingBank] = useState(false);
   
-  // 安全數值計算
   const studioRate = Number(settings?.studioRate) || 350;
   const kbRate = Number(settings?.kbRate) || 200;
 
   const total = (hours * studioRate) + (hasKB ? kbRate : 0);
-  
-  // 🛡️ v4.7 修正：只計算有效團員 (避免鬼魂 ID 影響金額)
   const validSelectedIds = selectedIds.filter(id => safeMembers.some(m => m.id === id));
   const perPerson = validSelectedIds.length > 0 ? Math.ceil(total / validSelectedIds.length) : 0;
   
   const handleUpdateBank = async () => { if(!db) return; await updateDoc(getDocRef(db, 'general', 'info'), { settings: { ...settings, studioBankAccount: bankAccount } }); setEditingBank(false); };
   
   const toggleSelection = async (memberId) => {
-      // 修正：使用 arrayUnion/arrayRemove 進行原子更新，避免併發問題
       const ref = getDocRef(db, 'logs', session.id);
       if (selectedIds.includes(memberId)) {
           await updateDoc(ref, { attendance: arrayRemove(memberId) });
@@ -1148,14 +1138,8 @@ const PracticeFeeCalculator = ({ session, members = [], settings = {}, role = {}
   };
 
   const copyText = () => { 
-      // 🛡️ 修正：過濾掉無效成員，避免顯示「未知」
-      const validNames = validSelectedIds
-          .map(id => safeMembers.find(m => m.id === id)) // 找成員物件
-          .filter(m => m) // 過濾掉找不到的 (undefined)
-          .map(m => m.nickname); // 取暱稱
-          
+      const validNames = validSelectedIds.map(id => safeMembers.find(m => m.id === id)).filter(m => m).map(m => m.nickname); 
       const namesStr = validNames.length > 0 ? validNames.join('、') : '(無)';
-
       const text = `📅 ${session.date} 練團費用\n----------------\n⏱️ 時數：${hours}hr\n🎹 KB租借：${hasKB?'有':'無'}\n👥 分攤人：${namesStr}\n----------------\n💰 總金額：$${total}\n👉 每人應付：$${perPerson}\n\n匯款帳號：\n${bankAccount}`; 
       if(secureCopy(text)) alert("複製成功！"); 
   };
@@ -1172,7 +1156,6 @@ const PracticeFeeCalculator = ({ session, members = [], settings = {}, role = {}
 
           <div className="flex gap-2 items-center">
             <input className="w-full bg-[#FDFBF7] p-3 rounded-xl text-xs text-[#725E77] border border-transparent focus:border-[#77ABC0] outline-none" value={bankAccount} onChange={(e) => setBankAccount(e.target.value)} disabled={!editingBank} />
-            {/* Access role safely using Optional Chaining */}
             {(role?.admin || role?.finance) && !editingBank && <button onClick={()=>setEditingBank(true)}><Pencil size={16} className="text-[#C5B8BF]"/></button>}
             {editingBank && <button onClick={handleUpdateBank}><Check size={16} className="text-[#77ABC0]"/></button>}
           </div>
@@ -1182,7 +1165,6 @@ const PracticeFeeCalculator = ({ session, members = [], settings = {}, role = {}
   );
 };
 
-// 🛡️ v5.0 修正：MiscFeeCalculator 加入流水帳明細功能 + 嚴格防呆過濾
 const MiscFeeCalculator = ({ session, members = [], db }) => {
   const [items, setItems] = useState(session.miscExpenses || []); 
   const [newItem, setNewItem] = useState({ item: '', amount: '', payerId: '', splitters: [] });
@@ -1196,25 +1178,17 @@ const MiscFeeCalculator = ({ session, members = [], db }) => {
   const handleDelete = (idx) => { if (confirm("刪除此筆雜支？")) handleUpdate(items.filter((_, i) => i !== idx)); };
   const toggleSplitter = (memberId) => { const current = newItem.splitters || []; if (current.includes(memberId)) setNewItem({...newItem, splitters: current.filter(id => id !== memberId)}); else setNewItem({...newItem, splitters: [...current, memberId]}); };
   
-  // v4.8 修正：雜支計算過濾無效成員 (Ghost ID)，確保金額正確且不顯示未知
   const calculateDebt = () => {
       const balance = {}; 
       items.filter(i => !i.isSettled).forEach(item => { 
-          // 1. 過濾無效分攤人 (只保留在 safeMembers 裡找得到的 ID)
           const validSplitters = (item.splitters || []).filter(id => safeMembers.some(m => m.id === id));
-          
-          // 如果過濾後沒有分攤人，則跳過此筆 (避免除以 0)
           if (validSplitters.length === 0) return;
-
-          // 2. 使用有效分攤人數計算金額
           const splitAmount = item.amount / validSplitters.length; 
           
-          // 3. 記錄墊付人 (只記錄有效成員)
           if (safeMembers.some(m => m.id === item.payerId)) {
              balance[item.payerId] = (balance[item.payerId] || 0) + parseInt(item.amount); 
           }
 
-          // 4. 扣除有效分攤人的應付額
           validSplitters.forEach(sid => { 
               balance[sid] = (balance[sid] || 0) - splitAmount; 
           }); 
@@ -1223,7 +1197,6 @@ const MiscFeeCalculator = ({ session, members = [], db }) => {
       const result = []; 
       Object.keys(balance).forEach(id => { 
           const net = Math.round(balance[id]); 
-          // 5. 顯示前再次確認成員存在
           const member = safeMembers.find(m => m.id === id);
           if (!member) return; 
 
@@ -1233,26 +1206,21 @@ const MiscFeeCalculator = ({ session, members = [], db }) => {
       return result;
   };
 
-  // v5.0 新增：產生每位團員的流水帳明細 (同樣加入防呆過濾)
   const generateDetailedLogs = () => {
       const logs = {}; 
       safeMembers.forEach(m => { logs[m.id] = { name: m.nickname, paid: [], split: [], net: 0 }; });
 
       items.filter(i => !i.isSettled).forEach(item => {
-          // 1. 過濾無效分攤人
           const validSplitters = (item.splitters || []).filter(id => safeMembers.some(m => m.id === id));
           if (validSplitters.length === 0) return;
           
-          // 2. 計算金額
           const rawSplitAmount = item.amount / validSplitters.length;
 
-          // 3. 記錄墊付 (如果墊付人存在)
           if (logs[item.payerId]) {
               logs[item.payerId].paid.push({ item: item.item, amount: parseInt(item.amount) });
               logs[item.payerId].net += parseInt(item.amount);
           }
 
-          // 4. 記錄分攤 (只記錄有效成員)
           validSplitters.forEach(sid => {
               if (logs[sid]) {
                   logs[sid].split.push({ item: item.item, amount: rawSplitAmount });
@@ -1316,9 +1284,7 @@ const AlcoholFeeCalculator = ({ members = [], settings = {} }) => {
   const [payerId, setPayerId] = useState('');
   const [splitters, setSplitters] = useState([]);
   
-  // 雙重保險：確保 members 真的是陣列，防止 .map 崩潰
   const safeMembers = Array.isArray(members) ? members : [];
-  
   const perPerson = splitters.length > 0 ? Math.ceil(parseInt(amount || 0) / splitters.length) : 0;
   
   const toggleSplitter = (id) => {
@@ -1328,7 +1294,6 @@ const AlcoholFeeCalculator = ({ members = [], settings = {} }) => {
 
   const copyResult = () => {
     if (!amount || !payerId || splitters.length === 0) return alert("請完整填寫資訊");
-    // 🛡️ 修正：資料查找防呆
     const payerName = safeMembers.find(m => m.id === payerId)?.nickname || '未知';
     const text = `🍺 酒水補貨\n----------------\n💰 總金額：$${amount}\n👑 墊付人：${payerName}\n👥 分攤人：${splitters.map(id => (safeMembers.find(m => m.id === id)?.nickname || '未知')).join('、')}\n----------------\n👉 每人應付：$${perPerson}\n給 ${payerName}`;
     if(secureCopy(text)) alert("複製成功！");
@@ -1372,19 +1337,115 @@ const AlcoholFeeCalculator = ({ members = [], settings = {} }) => {
 
 const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role = {}, user }) => {
   const [tab, setTab] = useState('list'); 
-  const [newAlcohol, setNewAlcohol] = useState({ name: '', type: '威士忌', level: 100, rating: 5, note: '', comments: [] });
   const [showAdd, setShowAdd] = useState(false);
-  const [editingId, setEditingId] = useState(null);
-  const [customType, setCustomType] = useState("");
   const [editingComment, setEditingComment] = useState({ alcoholId: null, index: null, text: '' });
   const [newCommentMap, setNewCommentMap] = useState({});
+
+  const today = new Date().toISOString().split('T')[0];
+  const [batchDate, setBatchDate] = useState(today);
+  const [batchItems, setBatchItems] = useState([
+      { name: '', type: '啤酒', level: 100, rating: 5, note: '' }
+  ]);
+  const [isInventoryMode, setIsInventoryMode] = useState(false);
 
   const alcoholOptions = Array.isArray(settings?.alcoholTypes) ? settings.alcoholTypes : ['紅酒', '白酒', '清酒', '氣泡酒', '啤酒', '威士忌', '其他'];
   const safeAlcohols = Array.isArray(alcohols) ? alcohols : [];
 
-  const handleSave = async () => { if (!newAlcohol.name || !db) return; const finalType = newAlcohol.type === '其他' ? customType : newAlcohol.type; const data = { ...newAlcohol, type: finalType }; if (editingId) await updateDoc(getDocRef(db, 'alcohol', editingId), data); else await addDoc(getCollectionRef(db, 'alcohol'), data); setShowAdd(false); setEditingId(null); setNewAlcohol({ name: '', type: '威士忌', level: 100, rating: 5, note: '', comments: [] }); };
+  const activeAlcohols = safeAlcohols.filter(a => a.date !== 'archived');
+  const archivedAlcohols = safeAlcohols.filter(a => a.date === 'archived');
+  
+  const groupedAlcohols = activeAlcohols.reduce((acc, curr) => {
+      const d = curr.date || '未知日期';
+      if (!acc[d]) acc[d] = [];
+      acc[d].push(curr);
+      return acc;
+  }, {});
+  
+  const sortedDates = Object.keys(groupedAlcohols).sort((a, b) => new Date(b) - new Date(a));
+
+  const handleAddBatchItem = () => {
+      setBatchItems([...batchItems, { name: '', type: '啤酒', level: 100, rating: 5, note: '' }]);
+  };
+
+  const handleRemoveBatchItem = (index) => {
+      const newItems = [...batchItems];
+      newItems.splice(index, 1);
+      setBatchItems(newItems);
+  };
+
+  const handleUpdateBatchItem = (index, field, value) => {
+      const newItems = [...batchItems];
+      newItems[index][field] = value;
+      setBatchItems(newItems);
+  };
+
+  const handleSaveBatch = async () => {
+      if (!db) return;
+      const validItems = batchItems.filter(item => item.name.trim() !== '');
+      if (validItems.length === 0) {
+          alert("請至少輸入一支酒的名稱");
+          return;
+      }
+
+      const batch = writeBatch(db);
+      validItems.forEach(item => {
+          const finalType = item.type === '其他' ? (item.customType || '其他') : item.type;
+          const docRef = doc(collection(db, 'artifacts', storageAppId, 'public', 'data', 'alcohol')); 
+          batch.set(docRef, {
+              name: item.name,
+              type: finalType,
+              level: parseInt(item.level),
+              note: item.note,
+              date: batchDate, 
+              comments: [],
+              createdAt: serverTimestamp()
+          });
+      });
+
+      await batch.commit();
+      setShowAdd(false);
+      setBatchItems([{ name: '', type: '啤酒', level: 100, rating: 5, note: '' }]);
+  };
+
+  const [inventoryState, setInventoryState] = useState({}); 
+
+  const startInventory = () => {
+      const initialState = {};
+      safeAlcohols.forEach(a => {
+          initialState[a.id] = { level: a.level, toDelete: false };
+      });
+      setInventoryState(initialState);
+      setIsInventoryMode(true);
+  };
+
+  const cancelInventory = () => {
+      setIsInventoryMode(false);
+      setInventoryState({});
+  };
+
+  const saveInventory = async () => {
+      if (!db || !confirm("確定儲存盤點結果？未喝完的酒將統一歸入「寄酒/庫存中」。")) return;
+
+      const batch = writeBatch(db);
+      Object.keys(inventoryState).forEach(id => {
+          const state = inventoryState[id];
+          const docRef = doc(db, 'artifacts', storageAppId, 'public', 'data', 'alcohol', id);
+          
+          if (state.toDelete || state.level <= 0) {
+              batch.delete(docRef);
+          } else {
+              batch.update(docRef, { 
+                  level: state.level,
+                  date: 'archived' 
+              });
+          }
+      });
+
+      await batch.commit();
+      setIsInventoryMode(false);
+  };
+
   const handleDelete = async (id) => { if (!db || !confirm("確定刪除此酒品？")) return; await deleteDoc(getDocRef(db, 'alcohol', id)); };
-  const handleEdit = (a) => { setNewAlcohol(a); setEditingId(a.id); setShowAdd(true); };
   
   const handleAddComment = async (id) => { 
       const text = newCommentMap[id];
@@ -1399,16 +1460,8 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
       await updateDoc(getDocRef(db, 'alcohol', id), { comments: [...currentComments, newComment] }); 
       setNewCommentMap({ ...newCommentMap, [id]: '' });
   };
-
-  // 修正：移除 alert 副作用，純粹返回權限狀態
-  const checkPermission = (commentUid) => {
-      if (user?.uid === commentUid || role.admin) return true;
-      // alert("只能修改自己的心得喔！"); // 移除此行，避免渲染時瘋狂跳窗
-      return false;
-  };
-
+  const checkPermission = (commentUid) => { return user?.uid === commentUid || role.admin; };
   const handleDeleteComment = async (alcoholId, comment, commentIdx) => { 
-      // 點擊時的權限保護
       if (!checkPermission(comment.uid)) return;
       if(!confirm("刪除留言？")) return; 
       const alcohol = alcohols.find(a => a.id === alcoholId);
@@ -1416,12 +1469,10 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
       newComments.splice(commentIdx, 1); 
       await updateDoc(getDocRef(db, 'alcohol', alcoholId), { comments: newComments }); 
   };
-
   const startEditComment = (alcoholId, comment, index) => {
       if (!checkPermission(comment.uid)) return;
       setEditingComment({ alcoholId, index, text: comment.text });
   };
-
   const saveEditedComment = async () => {
       const { alcoholId, index, text } = editingComment;
       const alcohol = alcohols.find(a => a.id === alcoholId);
@@ -1431,73 +1482,172 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
       setEditingComment({ alcoholId: null, index: null, text: '' });
   };
 
+  const renderAlcoholCard = (a) => (
+      <div key={a.id} className="bg-white p-5 rounded-[28px] border border-[#E0E0D9] shadow-sm flex flex-col gap-3 relative group">
+         <div className="flex gap-4 items-start">
+            <div className="bg-[#F0EEE6] w-16 h-20 rounded-2xl flex items-center justify-center shrink-0"><Wine className="text-[#D6C592]" size={32} /></div>
+            <div className="flex-1">
+                <h3 className="font-bold text-lg text-[#725E77]">{a.name}</h3>
+                <p className="text-xs font-bold text-[#8B8C89] mb-1">{a.type}</p>
+                <div className="w-full h-1.5 bg-[#F0F4F5] rounded-full overflow-hidden mb-2">
+                    <div className="h-full bg-[#D6C592]" style={{width: `${a.level}%`}}></div>
+                </div>
+                <div className="text-xs text-[#6E7F9B]">{a.note}</div>
+            </div>
+            {role.alcohol && <button onClick={() => handleDelete(a.id)} className="text-[#BC8F8F] opacity-0 group-hover:opacity-100 transition"><Trash2 size={16}/></button>}
+         </div>
+         
+         <div className="pt-2 border-t border-[#F0F4F5]">
+            {(a.comments || []).map((c, idx) => (
+                <div key={idx} className="mb-2 group/comment">
+                    {editingComment.alcoholId === a.id && editingComment.index === idx ? (
+                        <div className="flex gap-2 items-center bg-[#F0F4F5] p-2 rounded-lg">
+                            <input className="w-full bg-transparent text-sm text-[#725E77] outline-none" value={editingComment.text} autoFocus onChange={(e) => setEditingComment({...editingComment, text: e.target.value})} onKeyDown={(e) => { if(e.key === 'Enter') saveEditedComment(); else if(e.key === 'Escape') setEditingComment({ alcoholId: null, index: null, text: '' }); }} />
+                            <button onClick={saveEditedComment} className="text-[#77ABC0] hover:bg-white p-1 rounded"><Check size={16}/></button>
+                            <button onClick={() => setEditingComment({ alcoholId: null, index: null, text: '' })} className="text-[#BC8F8F] hover:bg-white p-1 rounded"><X size={16}/></button>
+                        </div>
+                    ) : (
+                        <div className="text-sm text-[#6E7F9B] flex justify-between items-start">
+                            <span className="leading-snug"><span className="font-bold text-[#725E77]">{c.user}:</span> {c.text}</span>
+                            {checkPermission(c.uid) && (
+                                <div className="flex gap-1 opacity-0 group-hover/comment:opacity-100 transition-opacity">
+                                    <button onClick={() => startEditComment(a.id, c, idx)} className="text-[#77ABC0] p-0.5"><Pencil size={12}/></button>
+                                    <button onClick={() => handleDeleteComment(a.id, c, idx)} className="text-[#BC8F8F] p-0.5"><Trash2 size={12}/></button>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            ))}
+            <div className="flex gap-2 mt-3 items-center">
+              <input className="w-full bg-[#FDFBF7] p-2 rounded-xl text-sm outline-none border border-transparent focus:border-[#77ABC0]/30 transition" placeholder="寫下品飲心得..." value={newCommentMap[a.id] || ''} onChange={(e) => setNewCommentMap({ ...newCommentMap, [a.id]: e.target.value })} onKeyDown={(e) => e.key === 'Enter' && handleAddComment(a.id)} />
+              <button onClick={() => handleAddComment(a.id)} className={`p-2 rounded-xl transition ${newCommentMap[a.id] ? 'bg-[#77ABC0] text-white shadow-md' : 'bg-[#F0F4F5] text-[#C5B8BF]'}`} disabled={!newCommentMap[a.id]}><ArrowRight size={18} /></button>
+            </div>
+         </div>
+      </div>
+  );
+
   return (
     <div className="space-y-4 animate-in slide-in-from-right-8">
-      <div className="flex bg-[#E0E0D9] p-1 rounded-xl mb-2"><button onClick={() => setTab('list')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition ${tab === 'list' ? 'bg-white shadow text-[#77ABC0]' : 'text-[#C5B8BF]'}`}>庫存清單</button><button onClick={() => setTab('calculator')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition ${tab === 'calculator' ? 'bg-white shadow text-[#77ABC0]' : 'text-[#C5B8BF]'}`}>補貨計算</button></div>
+      <div className="flex bg-[#E0E0D9] p-1 rounded-xl mb-2">
+          <button onClick={() => setTab('list')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition ${tab === 'list' ? 'bg-white shadow text-[#77ABC0]' : 'text-[#C5B8BF]'}`}>酒櫃庫存</button>
+          <button onClick={() => setTab('calculator')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition ${tab === 'calculator' ? 'bg-white shadow text-[#77ABC0]' : 'text-[#C5B8BF]'}`}>補貨計算</button>
+      </div>
+
       {tab === 'list' ? (
-        <div className="space-y-3">
-          {role.alcohol && <button onClick={() => { setEditingId(null); setNewAlcohol({ name: '', type: '威士忌', level: 100, rating: 5, note: '', comments: [] }); setShowAdd(true); }} className="w-full py-3 text-[#CBABCA] font-bold text-xs flex items-center justify-center gap-1 border border-dashed border-[#CBABCA] rounded-2xl hover:bg-[#FFF5F7]"><Plus size={14}/> 新增酒品</button>}
-          
-          {showAdd && (<div className="bg-white p-4 rounded-[24px] border border-[#77ABC0] space-y-3"><input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="酒名" value={newAlcohol.name} onChange={e=>setNewAlcohol({...newAlcohol, name: e.target.value})} /><select className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" value={newAlcohol.type} onChange={e=>setNewAlcohol({...newAlcohol, type: e.target.value})}>{alcoholOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}</select>{newAlcohol.type === '其他' && <input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="輸入自訂種類" value={customType} onChange={e=>setCustomType(e.target.value)} />}<div className="flex items-center gap-2 text-xs text-[#C5B8BF]"><span>剩餘量: {newAlcohol.level}%</span><input type="range" min="0" max="100" className="flex-1" value={newAlcohol.level} onChange={e=>setNewAlcohol({...newAlcohol, level: e.target.value})} /></div><input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="備註..." value={newAlcohol.note} onChange={e=>setNewAlcohol({...newAlcohol, note: e.target.value})} /><div className="flex gap-2"><button onClick={() => setShowAdd(false)} className="flex-1 p-2 text-xs text-slate-400">取消</button><button onClick={handleSave} className="flex-1 p-2 bg-[#77ABC0] text-white rounded-lg text-xs font-bold">儲存</button></div></div>)}
-          
-          {safeAlcohols.map(a => (
-            <div key={a.id} className="bg-white p-5 rounded-[28px] border border-[#E0E0D9] shadow-sm flex flex-col gap-3 relative group">
-               <div className="flex gap-4 items-start">
-                  <div className="bg-[#F0EEE6] w-16 h-20 rounded-2xl flex items-center justify-center shrink-0"><Wine className="text-[#D6C592]" size={32} /></div>
-                  <div className="flex-1" onClick={() => role.alcohol && handleEdit(a)}><h3 className="font-bold text-lg text-[#725E77]">{a.name}</h3><p className="text-xs font-bold text-[#8B8C89] mb-1">{a.type}</p><div className="w-full h-1.5 bg-[#F0F4F5] rounded-full overflow-hidden mb-2"><div className="h-full bg-[#D6C592]" style={{width: `${a.level}%`}}></div></div><div className="text-xs text-[#6E7F9B]">{a.note}</div></div>
-                  {role.alcohol && <button onClick={() => handleDelete(a.id)} className="text-[#BC8F8F] opacity-0 group-hover:opacity-100 transition"><Trash2 size={16}/></button>}
-               </div>
-               
-               <div className="pt-2 border-t border-[#F0F4F5]">
-                  {(a.comments || []).map((c, idx) => (
-                      <div key={idx} className="mb-2 group/comment">
-                          {/* 判斷是否處於編輯模式 */}
-                          {editingComment.alcoholId === a.id && editingComment.index === idx ? (
-                              <div className="flex gap-2 items-center bg-[#F0F4F5] p-2 rounded-lg">
-                                  <input 
-                                    className="w-full bg-transparent text-sm text-[#725E77] outline-none" 
-                                    value={editingComment.text} 
-                                    autoFocus
-                                    onChange={(e) => setEditingComment({...editingComment, text: e.target.value})}
-                                    onKeyDown={(e) => { if(e.key === 'Enter') saveEditedComment(); else if(e.key === 'Escape') setEditingComment({ alcoholId: null, index: null, text: '' }); }}
-                                  />
-                                  <button onClick={saveEditedComment} className="text-[#77ABC0] hover:bg-white p-1 rounded"><Check size={16}/></button>
-                                  <button onClick={() => setEditingComment({ alcoholId: null, index: null, text: '' })} className="text-[#BC8F8F] hover:bg-white p-1 rounded"><X size={16}/></button>
+        <div className="space-y-4">
+          {role.alcohol && !isInventoryMode && (
+              <div className="flex gap-2">
+                  <button onClick={() => { setShowAdd(!showAdd); setBatchDate(today); setBatchItems([{ name: '', type: '啤酒', level: 100, rating: 5, note: '' }]); }} className="flex-1 py-3 bg-white text-[#77ABC0] font-bold text-xs flex items-center justify-center gap-1 border border-[#77ABC0] rounded-2xl hover:bg-[#F0F4F5] transition"><Plus size={14}/> 批次進貨</button>
+                  {safeAlcohols.length > 0 && <button onClick={startInventory} className="flex-1 py-3 bg-[#725E77] text-white font-bold text-xs flex items-center justify-center gap-1 rounded-2xl shadow-md hover:bg-[#5a4a5e] transition"><ClipboardList size={14}/> 進行盤點</button>}
+              </div>
+          )}
+
+          {showAdd && !isInventoryMode && (
+              <div className="bg-white p-5 rounded-[28px] border-2 border-[#77ABC0] shadow-lg space-y-4 animate-in fade-in slide-in-from-top-4">
+                  <div className="flex justify-between items-center">
+                      <h3 className="font-bold text-[#725E77]">📦 批次進貨</h3>
+                      <input type="date" className="bg-[#FDFBF7] p-2 rounded-lg text-sm border border-[#E0E0D9] text-[#725E77] font-bold outline-none" value={batchDate} onChange={e => setBatchDate(e.target.value)} />
+                  </div>
+                  
+                  <div className="space-y-3">
+                      {batchItems.map((item, index) => (
+                          <div key={index} className="bg-[#F0F4F5] p-3 rounded-xl relative border border-[#A8D8E2]/50">
+                              {batchItems.length > 1 && <button onClick={() => handleRemoveBatchItem(index)} className="absolute -top-2 -right-2 bg-red-100 text-red-500 rounded-full p-1"><X size={14}/></button>}
+                              <div className="flex gap-2 mb-2">
+                                  <input className="flex-1 bg-white p-2 rounded-lg text-sm outline-none" placeholder="酒名 (必填)" value={item.name} onChange={e => handleUpdateBatchItem(index, 'name', e.target.value)} />
+                                  <select className="w-24 bg-white p-2 rounded-lg text-sm outline-none" value={item.type} onChange={e => handleUpdateBatchItem(index, 'type', e.target.value)}>
+                                      {alcoholOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                                  </select>
                               </div>
-                          ) : (
-                              <div className="text-sm text-[#6E7F9B] flex justify-between items-start">
-                                  <span className="leading-snug"><span className="font-bold text-[#725E77]">{c.user}:</span> {c.text}</span>
-                                  {checkPermission(c.uid) && (
-                                      <div className="flex gap-1 opacity-0 group-hover/comment:opacity-100 transition-opacity">
-                                          <button onClick={() => startEditComment(a.id, c, idx)} className="text-[#77ABC0] p-0.5"><Pencil size={12}/></button>
-                                          <button onClick={() => handleDeleteComment(a.id, c, idx)} className="text-[#BC8F8F] p-0.5"><Trash2 size={12}/></button>
-                                      </div>
-                                  )}
+                              {item.type === '其他' && <input className="w-full bg-white p-2 rounded-lg text-sm mb-2 outline-none" placeholder="輸入自訂種類" value={item.customType || ''} onChange={e => handleUpdateBatchItem(index, 'customType', e.target.value)} />}
+                              <div className="flex items-center gap-2 text-xs text-[#725E77] font-bold mb-2">
+                                  <span>剩餘量: {item.level}%</span>
+                                  <input type="range" min="0" max="100" className="flex-1" value={item.level} onChange={e => handleUpdateBatchItem(index, 'level', e.target.value)} />
                               </div>
-                          )}
+                              <input className="w-full bg-white p-2 rounded-lg text-sm outline-none" placeholder="備註 (選填)..." value={item.note} onChange={e => handleUpdateBatchItem(index, 'note', e.target.value)} />
+                          </div>
+                      ))}
+                  </div>
+
+                  <button onClick={handleAddBatchItem} className="w-full py-3 border-2 border-dashed border-[#77ABC0]/50 text-[#77ABC0] rounded-xl font-bold flex justify-center items-center gap-1 hover:bg-[#F0F4F5] transition"><Plus size={14}/> 新增下一支</button>
+                  <div className="flex gap-2 pt-2"><button onClick={() => setShowAdd(false)} className="flex-1 p-3 rounded-xl text-[#C5B8BF] font-bold hover:bg-slate-50">取消</button><button onClick={handleSaveBatch} className="flex-1 p-3 bg-[#77ABC0] text-white rounded-xl font-bold shadow-lg hover:bg-[#6699af]">全部儲存</button></div>
+              </div>
+          )}
+
+          {isInventoryMode && (
+              <div className="bg-[#FFF9DB] p-5 rounded-[28px] border-2 border-[#D6C592] shadow-lg animate-in fade-in">
+                  <div className="flex justify-between items-center mb-4">
+                      <h3 className="font-bold text-[#8C7A35] flex items-center gap-2"><ClipboardList size={20}/> 快速盤點模式</h3>
+                      <span className="text-xs bg-white text-[#8C7A35] px-2 py-1 rounded-lg font-bold shadow-sm">{safeAlcohols.length} 支</span>
+                  </div>
+                  <div className="space-y-2 mb-4 max-h-[60vh] overflow-y-auto pr-1">
+                      {safeAlcohols.map(a => {
+                          const state = inventoryState[a.id];
+                          if (!state) return null;
+                          const isDeleted = state.toDelete || state.level <= 0;
+
+                          return (
+                              <div key={a.id} className={`bg-white p-3 rounded-xl border flex items-center gap-3 transition-all ${isDeleted ? 'opacity-50 border-red-200 bg-red-50' : 'border-[#E0E0D9]'}`}>
+                                  <div className="flex-1 min-w-0">
+                                      <div className={`font-bold text-sm truncate ${isDeleted ? 'line-through text-red-400' : 'text-[#725E77]'}`}>{a.name}</div>
+                                      {!isDeleted && (
+                                          <div className="flex items-center gap-2 mt-1">
+                                              <span className="text-[10px] text-[#C5B8BF] font-bold w-8">{state.level}%</span>
+                                              <input type="range" min="0" max="100" step="5" value={state.level} onChange={(e) => setInventoryState({...inventoryState, [a.id]: { ...state, level: parseInt(e.target.value) }})} className="flex-1 accent-[#D6C592]" />
+                                          </div>
+                                      )}
+                                      {isDeleted && <div className="text-[10px] text-red-500 font-bold mt-1">盤點後將刪除</div>}
+                                  </div>
+                                  <button onClick={() => setInventoryState({...inventoryState, [a.id]: { ...state, toDelete: !state.toDelete }})} className={`w-12 h-12 rounded-xl flex flex-col items-center justify-center shrink-0 transition ${isDeleted ? 'bg-red-500 text-white shadow-inner' : 'bg-[#F0F4F5] text-[#C5B8BF] hover:bg-red-100 hover:text-red-500'}`}>
+                                      <XCircle size={18}/>
+                                      <span className="text-[9px] font-bold mt-0.5">喝光</span>
+                                  </button>
+                              </div>
+                          );
+                      })}
+                  </div>
+                  <div className="flex gap-2">
+                      <button onClick={cancelInventory} className="flex-1 p-3 rounded-xl bg-white text-[#C5B8BF] font-bold border border-[#E0E0D9]">取消</button>
+                      <button onClick={saveInventory} className="flex-1 p-3 rounded-xl bg-[#8C7A35] text-white font-bold shadow-lg flex items-center justify-center gap-2"><CheckCircle size={16}/> 完成盤點</button>
+                  </div>
+              </div>
+          )}
+
+          {!isInventoryMode && (
+              <div className="space-y-6">
+                  {sortedDates.map(date => (
+                      <div key={date} className="space-y-3">
+                          <div className="flex items-center gap-2 pl-2">
+                              <Calendar size={16} className="text-[#77ABC0]"/>
+                              <h3 className="font-bold text-sm text-[#77ABC0] tracking-wider">{date} 新增</h3>
+                          </div>
+                          <div className="grid gap-3">
+                              {groupedAlcohols[date].map(renderAlcoholCard)}
+                          </div>
                       </div>
                   ))}
-                  
-                  {/* 新增留言區塊 - 放大並加上確認鍵 */}
-                  <div className="flex gap-2 mt-3 items-center">
-                    <input 
-                      className="w-full bg-[#FDFBF7] p-2 rounded-xl text-sm outline-none border border-transparent focus:border-[#77ABC0]/30 transition" 
-                      placeholder="寫下品飲心得..." 
-                      value={newCommentMap[a.id] || ''}
-                      onChange={(e) => setNewCommentMap({ ...newCommentMap, [a.id]: e.target.value })}
-                      onKeyDown={(e) => e.key === 'Enter' && handleAddComment(a.id)}
-                    />
-                    <button 
-                      onClick={() => handleAddComment(a.id)} 
-                      className={`p-2 rounded-xl transition ${newCommentMap[a.id] ? 'bg-[#77ABC0] text-white shadow-md' : 'bg-[#F0F4F5] text-[#C5B8BF]'}`}
-                      disabled={!newCommentMap[a.id]}
-                    >
-                      <ArrowRight size={18} />
-                    </button>
-                  </div>
-               </div>
-            </div>
-          ))}
+
+                  {archivedAlcohols.length > 0 && (
+                      <div className="space-y-3 pt-4 border-t-2 border-dashed border-[#E0E0D9]">
+                          <div className="flex items-center gap-2 pl-2">
+                              <Archive size={16} className="text-[#D6C592]"/>
+                              <h3 className="font-bold text-sm text-[#8C7A35] tracking-wider">🍾 寄酒 / 庫存中</h3>
+                          </div>
+                          <div className="grid gap-3">
+                              {archivedAlcohols.map(renderAlcoholCard)}
+                          </div>
+                      </div>
+                  )}
+
+                  {safeAlcohols.length === 0 && !showAdd && (
+                      <div className="text-center py-10 border-2 border-dashed border-[#E0E0D9] rounded-[28px] text-[#C5B8BF]">
+                          <Wine size={40} className="mx-auto mb-2 opacity-50" />
+                          <p className="text-sm font-bold">酒櫃目前空空如也</p>
+                      </div>
+                  )}
+              </div>
+          )}
         </div>
       ) : <AlcoholFeeCalculator members={members} settings={settings} />}
     </div>
@@ -1512,7 +1662,6 @@ const TechView = ({ songs = [], db, role, user }) => {
   const [editingSongId, setEditingSongId] = useState(null);
   const [editForm, setEditForm] = useState({});
   
-  // 新增：連結編輯用狀態 (用於資源分享)
   const [newLinkUrl, setNewLinkUrl] = useState("");
   const [newLinkLabel, setNewLinkLabel] = useState("");
 
@@ -1523,7 +1672,7 @@ const TechView = ({ songs = [], db, role, user }) => {
       if (!newSong.title || !db) return; 
       
       let finalLinks = [...(newSong.links || [])];
-      // v5.3 修正：自動收納尚未點擊 + 號的連結
+      // v6.1 防呆修正：自動收納尚未點擊 + 號的連結
       if (newLinkUrl.trim()) {
           finalLinks.push({ url: newLinkUrl.trim(), label: newLinkLabel.trim() || '連結' });
       }
@@ -1544,10 +1693,8 @@ const TechView = ({ songs = [], db, role, user }) => {
   const handleDelete = async (id) => { if (!db || !confirm("刪除此資源？")) return; await deleteDoc(getDocRef(db, 'songs', id)); };
   
   const startEdit = (song) => {
-    // 嚴格權限檢查
     if (role.admin || song.uid === user.uid) {
         setEditingSongId(song.id);
-        // 相容舊資料
         let currentLinks = Array.isArray(song.links) ? song.links : [];
         if (song.link && currentLinks.length === 0) {
             currentLinks = [{ url: song.link, label: "連結" }];
@@ -1571,7 +1718,7 @@ const TechView = ({ songs = [], db, role, user }) => {
     if (!editForm.title || !db) return;
     
     let finalLinks = [...(editForm.links || [])];
-    // v5.3 修正：自動收納尚未點擊 + 號的連結
+    // v6.1 防呆修正：自動收納尚未點擊 + 號的連結
     if (newLinkUrl.trim()) {
         finalLinks.push({ url: newLinkUrl.trim(), label: newLinkLabel.trim() || '連結' });
     }
@@ -1586,7 +1733,6 @@ const TechView = ({ songs = [], db, role, user }) => {
     setNewLinkLabel("");
   };
 
-  // 資源連結操作
   const addLinkToEditForm = () => {
       if (!newLinkUrl?.trim()) { alert("請輸入連結！"); return; }
       const label = newLinkLabel?.trim() || "連結";
@@ -1645,7 +1791,7 @@ const TechView = ({ songs = [], db, role, user }) => {
                      </div>
                  ))}
                  <div className="flex gap-1 items-center">
-                     <input className="flex-1 bg-white p-1.5 text-xs border rounded outline-none" placeholder="網址 (https://...)" value={newLinkUrl} onChange={e=>setNewLinkUrl(e.target.value)}/>
+                     <input className="flex-1 bg-white p-1.5 text-xs border rounded outline-none" placeholder="網址..." value={newLinkUrl} onChange={e=>setNewLinkUrl(e.target.value)}/>
                      <input className="w-16 bg-white p-1.5 text-xs border rounded outline-none" placeholder="名稱" value={newLinkLabel} onChange={e=>setNewLinkLabel(e.target.value)}/>
                      <button onClick={() => addLinkToState(false)} className="bg-[#77ABC0] text-white p-1.5 rounded"><Plus size={14}/></button>
                  </div>
@@ -1657,7 +1803,6 @@ const TechView = ({ songs = [], db, role, user }) => {
             const isEditing = editingSongId === s.id;
             const canEdit = role.admin || s.uid === user.uid;
             
-            // 顯示用的連結列表
             let displayLinks = Array.isArray(s.links) ? s.links : [];
             if (s.link && displayLinks.length === 0) displayLinks = [{ url: s.link, label: "連結" }];
 
@@ -1670,7 +1815,6 @@ const TechView = ({ songs = [], db, role, user }) => {
                             <option value="cover">Cover</option><option value="tech">Tech</option><option value="gear">Gear</option>
                         </select>
                         
-                        {/* 編輯模式下的連結管理 */}
                         <div className="bg-[#FDFBF7] p-2 rounded-lg space-y-2">
                              <div className="text-xs font-bold text-[#C5B8BF] mb-1">連結列表</div>
                              {(editForm.links || []).map((l, i) => (
@@ -1767,7 +1911,6 @@ const RepertoireManager = ({ repertoire = [], db, role, user }) => {
     const [editingSong, setEditingSong] = useState(null);
     const [form, setForm] = useState({ title: '', artist: '', key: '', links: [], tags: '' });
     
-    // 新增：連結編輯用狀態
     const [newLinkUrl, setNewLinkUrl] = useState("");
     const [newLinkLabel, setNewLinkLabel] = useState("");
 
@@ -1781,7 +1924,7 @@ const RepertoireManager = ({ repertoire = [], db, role, user }) => {
     const handleSave = async () => {
         if (!form.title || !db) return;
         
-        // v5.3 修正：自動收納尚未點擊 + 號的連結
+        // v6.1 防呆修正：自動收納尚未點擊 + 號的連結
         let finalLinks = [...(form.links || [])];
         if (newLinkUrl.trim()) {
             finalLinks.push({ url: newLinkUrl.trim(), label: newLinkLabel.trim() || '連結' });
@@ -1795,7 +1938,7 @@ const RepertoireManager = ({ repertoire = [], db, role, user }) => {
                 await addDoc(getCollectionRef(db, 'repertoire'), {
                     ...dataToSave,
                     createdBy: user.displayName,
-                    uid: user.uid, // 紀錄上傳者 ID
+                    uid: user.uid, 
                     createdAt: serverTimestamp()
                 });
             }
@@ -1811,15 +1954,12 @@ const RepertoireManager = ({ repertoire = [], db, role, user }) => {
     };
 
     const handleDelete = async (id) => {
-        // 修正：移除權限檢查，開放給所有團員
         if (!confirm("確定要刪除這首歌嗎？")) return;
         await deleteDoc(getDocRef(db, 'repertoire', id));
     };
     
     const startEdit = (song) => {
-        // 修正：權限全面開放，不檢查 uid
         setEditingSong(song);
-        // 相容舊資料轉換：將 youtube/sheet 欄位轉為 links
         let initLinks = Array.isArray(song.links) ? song.links : [];
         if (initLinks.length === 0) {
             if (song.youtube) initLinks.push({ label: 'YouTube', url: song.youtube });
@@ -1869,7 +2009,6 @@ const RepertoireManager = ({ repertoire = [], db, role, user }) => {
                          <input className="bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="標籤 (Ex: #新歌)" value={form.tags} onChange={e => setForm({...form, tags: e.target.value})} />
                     </div>
                     
-                    {/* 多連結編輯區 */}
                     <div className="bg-[#FDFBF7] p-2 rounded-lg space-y-2">
                         <div className="text-xs font-bold text-[#C5B8BF] mb-1">相關連結</div>
                         {(form.links || []).map((l, i) => (
@@ -1894,9 +2033,7 @@ const RepertoireManager = ({ repertoire = [], db, role, user }) => {
 
             <div className="space-y-3">
                 {filteredSongs.map(s => {
-                    // 顯示用的連結列表
                     let displayLinks = Array.isArray(s.links) ? s.links : [];
-                    // 如果沒有新格式連結，嘗試顯示舊格式
                     if (displayLinks.length === 0) {
                         if (s.youtube) displayLinks.push({ label: 'YouTube', url: s.youtube });
                         if (s.sheet) displayLinks.push({ label: '樂譜', url: s.sheet });
@@ -1916,14 +2053,12 @@ const RepertoireManager = ({ repertoire = [], db, role, user }) => {
                                     </div>
                                 </div>
                                 
-                                {/* 修正：編輯/刪除按鈕對所有登入者開放 */}
                                 <div className="flex gap-1 shrink-0 ml-2">
                                     <button onClick={() => startEdit(s)} className="p-1.5 text-[#77ABC0] bg-white/80 rounded-full hover:bg-white shadow-sm transition"><Pencil size={14}/></button>
                                     <button onClick={() => handleDelete(s.id)} className="p-1.5 text-[#BC8F8F] bg-white/80 rounded-full hover:bg-white shadow-sm transition"><Trash2 size={14}/></button>
                                 </div>
                             </div>
                             
-                            {/* 修正：在列表直接顯示所有連結 */}
                             <div className="flex flex-wrap gap-2 mt-1">
                                 {displayLinks.length === 0 && <span className="text-xs text-[#C5B8BF] italic">無連結</span>}
                                 {displayLinks.map((l, i) => (
