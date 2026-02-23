@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
-// v5.2 核心修正：完整版程式碼，包含雜支流水帳明細、計算機防呆過濾、酒櫃防呆、曲庫全開
+// v5.3 核心修正：修復日誌連結無法儲存的問題 (新增自動收納未點擊 + 號的連結邏輯)，並整合新版介面
 import { 
   getAuth, 
   signInWithPopup, 
@@ -433,7 +433,7 @@ const App = () => {
           <div className="flex items-center gap-3">
             {showImage ? <img src={BAND_LOGO_BASE64} alt="Logo" className="w-9 h-9 rounded-xl object-contain bg-white shadow-sm" onError={() => setImgError(true)} /> : <BandLogo />}
             <span className="font-bold text-lg tracking-wide text-[#77ABC0]">{BAND_NAME}</span>
-            <span className="text-[9px] bg-[#E8F1E9] text-[#5F7A61] px-1.5 py-0.5 rounded-full font-bold ml-1">v5.2</span>
+            <span className="text-[9px] bg-[#E8F1E9] text-[#5F7A61] px-1.5 py-0.5 rounded-full font-bold ml-1">v5.3</span>
           </div>
           <div className="flex items-center gap-2">
             {role.admin && <span className="bg-rose-100 text-rose-600 text-[10px] px-2 py-0.5 rounded-full font-bold">Admin</span>}
@@ -640,7 +640,6 @@ const DashboardView = ({ members = [], generalData = {}, alcoholCount = 0, db, r
             <h2 className="text-xl font-black text-[#E0E7EA] uppercase tracking-widest drop-shadow-md">{isValidDate ? nextPractice.title : "無練團安排"}</h2>
             <div className="flex gap-2">
               {role.admin && <button onClick={() => setEditingPractice(true)} className="bg-white/20 p-2 rounded-full backdrop-blur-sm hover:bg-white/40"><Pencil size={18}/></button>}
-              {/* 修正：移除倒數卡片上的行事曆連結 */}
             </div>
           </div>
           <div className="text-4xl font-black mb-1 font-mono tracking-tight drop-shadow-md">
@@ -966,18 +965,9 @@ const TrackList = ({ session, db, user, role, members }) => {
       const newVal = prompt("編輯留言", comment.text);
       if (newVal === null || newVal === comment.text) return; 
 
-      const updatedTracks = tracks.map(t => { if (t.id === trackId) { const newComments = [...t.comments]; newComments.splice(commentIdx, 1); return { ...t, comments: newComments }; } return t; }); 
+      const updatedTracks = tracks.map(t => { if (t.id === trackId) { const newComments = [...t.comments]; newComments[commentIdx].text = newVal; return { ...t, comments: newComments }; } return t; }); 
       await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks }); 
   };
-
-  const handleUpdateLink = async (trackId, link) => { 
-      const updatedTracks = tracks.map(t => { if (t.id === trackId) { return { ...t, link }; } return t; }); 
-      await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks }); 
-  };
-  const startEditLink = (trackId, currentLink) => { setEditingLinksId(trackId); setTempLinkVal(currentLink || ""); };
-  const saveLink = async (trackId) => { await handleUpdateLink(trackId, tempLinkVal); setEditingLinkId(null); };
-  const cancelEditLink = () => { setEditingLinkId(null); setTempLinkVal(""); };
-  const deleteLink = async (trackId) => { if(confirm("確定要移除這個連結嗎？")) { await handleUpdateLink(trackId, ""); } };
 
   // 新增：日誌多連結管理
   const openLinkManager = (track) => {
@@ -1004,14 +994,22 @@ const TrackList = ({ session, db, user, role, members }) => {
   };
 
   const saveAllLinks = async (trackId) => {
+      let finalLinks = [...tempLinks];
+      // v5.3 修正：自動收納尚未點擊 + 號的連結
+      if (newLinkUrl.trim()) {
+          finalLinks.push({ url: newLinkUrl.trim(), label: newLinkLabel.trim() || "連結" });
+      }
+
       const updatedTracks = tracks.map(t => {
           if (t.id === trackId) {
-              return { ...t, links: tempLinks, link: tempLinks.length > 0 ? tempLinks[0].url : "" };
+              return { ...t, links: finalLinks, link: finalLinks.length > 0 ? finalLinks[0].url : "" };
           }
           return t;
       });
       await updateDoc(getDocRef(db, 'logs', session.id), { tracks: updatedTracks });
       setEditingLinksId(null);
+      setNewLinkUrl("");
+      setNewLinkLabel("");
   };
 
   return (
@@ -1054,7 +1052,7 @@ const TrackList = ({ session, db, user, role, members }) => {
                               <button onClick={addLinkToTemp} className="bg-[#77ABC0] text-white p-2 rounded-lg"><Plus size={14}/></button>
                           </div>
                           <div className="flex gap-2 pt-2 mt-2 border-t border-white/50">
-                              <button onClick={() => setEditingLinksId(null)} className="flex-1 py-1.5 text-xs text-slate-500 bg-white rounded-lg">取消</button>
+                              <button onClick={() => { setEditingLinksId(null); setNewLinkUrl(""); setNewLinkLabel(""); }} className="flex-1 py-1.5 text-xs text-slate-500 bg-white rounded-lg">取消</button>
                               <button onClick={() => saveAllLinks(t.id)} className="flex-1 py-1.5 text-xs text-white bg-[#77ABC0] rounded-lg">儲存變更</button>
                           </div>
                       </div>
@@ -1520,7 +1518,29 @@ const TechView = ({ songs = [], db, role, user }) => {
 
   const safeSongs = Array.isArray(songs) ? songs : [];
   const filteredSongs = filter === 'all' ? safeSongs : safeSongs.filter(s => String(s.type || 'cover').toLowerCase() === filter);
-  const handleAdd = async () => { if (!newSong.title || !db) return; await addDoc(getCollectionRef(db, 'songs'), { ...newSong, user: user.displayName, uid: user.uid, links: [] }); setShowAdd(false); setNewSong({ title: '', artist: '', link: '', type: 'cover' }); };
+  
+  const handleAdd = async () => { 
+      if (!newSong.title || !db) return; 
+      
+      let finalLinks = [...(newSong.links || [])];
+      // v5.3 修正：自動收納尚未點擊 + 號的連結
+      if (newLinkUrl.trim()) {
+          finalLinks.push({ url: newLinkUrl.trim(), label: newLinkLabel.trim() || '連結' });
+      }
+
+      await addDoc(getCollectionRef(db, 'songs'), { 
+          ...newSong, 
+          links: finalLinks,
+          link: finalLinks.length > 0 ? finalLinks[0].url : "",
+          user: user.displayName, 
+          uid: user.uid 
+      }); 
+      setShowAdd(false); 
+      setNewSong({ title: '', artist: '', link: '', type: 'cover', links: [] }); 
+      setNewLinkUrl("");
+      setNewLinkLabel("");
+  };
+
   const handleDelete = async (id) => { if (!db || !confirm("刪除此資源？")) return; await deleteDoc(getDocRef(db, 'songs', id)); };
   
   const startEdit = (song) => {
@@ -1549,16 +1569,25 @@ const TechView = ({ songs = [], db, role, user }) => {
 
   const saveEdit = async () => {
     if (!editForm.title || !db) return;
+    
+    let finalLinks = [...(editForm.links || [])];
+    // v5.3 修正：自動收納尚未點擊 + 號的連結
+    if (newLinkUrl.trim()) {
+        finalLinks.push({ url: newLinkUrl.trim(), label: newLinkLabel.trim() || '連結' });
+    }
+
     await updateDoc(getDocRef(db, 'songs', editingSongId), {
         ...editForm,
-        link: editForm.links && editForm.links.length > 0 ? editForm.links[0].url : ""
+        links: finalLinks,
+        link: finalLinks.length > 0 ? finalLinks[0].url : ""
     });
     setEditingSongId(null);
+    setNewLinkUrl("");
+    setNewLinkLabel("");
   };
 
   // 資源連結操作
   const addLinkToEditForm = () => {
-      // 修正：空值時跳出提示，而非靜默失敗
       if (!newLinkUrl?.trim()) { alert("請輸入連結！"); return; }
       const label = newLinkLabel?.trim() || "連結";
       setEditForm({ 
@@ -1581,7 +1610,6 @@ const TechView = ({ songs = [], db, role, user }) => {
       const newLinkObj = { url: newLinkUrl.trim(), label };
       
       if (isEditMode) {
-          // This path is actually handled by addLinkToEditForm, keeping here for safety if reused
           setEditForm({ ...editForm, links: [...(editForm.links || []), newLinkObj] });
       } else {
           setNewSong({ ...newSong, links: [...(newSong.links || []), newLinkObj] });
@@ -1592,7 +1620,6 @@ const TechView = ({ songs = [], db, role, user }) => {
   
   const removeLinkFromState = (idx, isEditMode) => {
       if (isEditMode) {
-          // This path is actually handled by removeLinkFromEditForm
           const newLinks = [...(editForm.links || [])];
           newLinks.splice(idx, 1);
           setEditForm({ ...editForm, links: newLinks });
@@ -1618,7 +1645,7 @@ const TechView = ({ songs = [], db, role, user }) => {
                      </div>
                  ))}
                  <div className="flex gap-1 items-center">
-                     <input className="flex-1 bg-white p-1.5 text-xs border rounded outline-none" placeholder="網址..." value={newLinkUrl} onChange={e=>setNewLinkUrl(e.target.value)}/>
+                     <input className="flex-1 bg-white p-1.5 text-xs border rounded outline-none" placeholder="網址 (https://...)" value={newLinkUrl} onChange={e=>setNewLinkUrl(e.target.value)}/>
                      <input className="w-16 bg-white p-1.5 text-xs border rounded outline-none" placeholder="名稱" value={newLinkLabel} onChange={e=>setNewLinkLabel(e.target.value)}/>
                      <button onClick={() => addLinkToState(false)} className="bg-[#77ABC0] text-white p-1.5 rounded"><Plus size={14}/></button>
                  </div>
@@ -1653,7 +1680,7 @@ const TechView = ({ songs = [], db, role, user }) => {
                                  </div>
                              ))}
                              <div className="flex gap-1 items-center">
-                                 <input className="flex-1 bg-white p-1.5 text-xs border rounded outline-none" placeholder="網址..." value={newLinkUrl} onChange={e=>setNewLinkUrl(e.target.value)}/>
+                                 <input className="flex-1 bg-white p-1.5 text-xs border rounded outline-none" placeholder="網址 (https://...)" value={newLinkUrl} onChange={e=>setNewLinkUrl(e.target.value)}/>
                                  <input className="w-16 bg-white p-1.5 text-xs border rounded outline-none" placeholder="名稱" value={newLinkLabel} onChange={e=>setNewLinkLabel(e.target.value)}/>
                                  <button onClick={addLinkToEditForm} className="bg-[#77ABC0] text-white p-1.5 rounded"><Plus size={14}/></button>
                              </div>
@@ -1668,7 +1695,7 @@ const TechView = ({ songs = [], db, role, user }) => {
             }
 
             return (
-                <div key={s.id} className={`bg-white p-4 rounded-[24px] border border-[#E0E0D9] shadow-sm hover:shadow-md transition block relative group ${viewMode === 'list' ? 'flex flex-col gap-2' : ''}`}>
+                <div key={s.id} className={`bg-white p-4 rounded-[24px] border border-[#E0E0D9] shadow-sm hover:shadow-md transition block relative group ${viewMode === 'list' ? 'flex items-center gap-4' : ''}`}>
                     <div className="flex justify-between items-start">
                         <div className={`w-10 h-10 rounded-full flex items-center justify-center mb-2 ${s.type === 'cover' ? 'bg-[#FDF2F2] text-[#BC8F8F]' : s.type === 'tech' ? 'bg-[#F0F4F5] text-[#6D8A96]' : 'bg-[#FFF9DB] text-[#D6C592]'}`}>
                             {s.type === 'cover' ? <Headphones size={20}/> : s.type === 'tech' ? <Zap size={20}/> : <Gift size={20}/>}
@@ -1681,7 +1708,7 @@ const TechView = ({ songs = [], db, role, user }) => {
                         )}
                     </div>
                     
-                    <div>
+                    <div className="min-w-0 pr-2">
                         <h4 className="font-bold text-[#725E77] truncate">{s.title}</h4>
                         <p className="text-xs text-[#8B8C89]">{s.artist}</p>
                     </div>
@@ -1754,12 +1781,19 @@ const RepertoireManager = ({ repertoire = [], db, role, user }) => {
     const handleSave = async () => {
         if (!form.title || !db) return;
         
+        // v5.3 修正：自動收納尚未點擊 + 號的連結
+        let finalLinks = [...(form.links || [])];
+        if (newLinkUrl.trim()) {
+            finalLinks.push({ url: newLinkUrl.trim(), label: newLinkLabel.trim() || '連結' });
+        }
+        const dataToSave = { ...form, links: finalLinks };
+
         try {
             if (editingSong) {
-                await updateDoc(getDocRef(db, 'repertoire', editingSong.id), form);
+                await updateDoc(getDocRef(db, 'repertoire', editingSong.id), dataToSave);
             } else {
                 await addDoc(getCollectionRef(db, 'repertoire'), {
-                    ...form,
+                    ...dataToSave,
                     createdBy: user.displayName,
                     uid: user.uid, // 紀錄上傳者 ID
                     createdAt: serverTimestamp()
@@ -1894,7 +1928,8 @@ const RepertoireManager = ({ repertoire = [], db, role, user }) => {
                                 {displayLinks.length === 0 && <span className="text-xs text-[#C5B8BF] italic">無連結</span>}
                                 {displayLinks.map((l, i) => (
                                     <a key={i} href={l.url} target="_blank" className="text-[10px] bg-[#F0F4F5] text-[#725E77] px-2 py-1 rounded-full flex items-center gap-1 hover:bg-[#E0E7EA] hover:text-[#77ABC0] transition border border-transparent hover:border-[#77ABC0]/30">
-                                        <LinkIcon size={10}/> {l.label || '連結'}
+                                        {l.label === 'YouTube' ? <Youtube size={12}/> : l.label.includes('譜') ? <BookOpen size={12}/> : <LinkIcon size={12}/>}
+                                        {l.label}
                                     </a>
                                 ))}
                             </div>
