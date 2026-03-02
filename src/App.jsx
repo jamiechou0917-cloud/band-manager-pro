@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
-// v6.3 核心修正：優化酒櫃盤點模式的 UX（移除彈窗、改進按鈕文字、無縫返回）
+// v6.4 核心修正：酒櫃升級 3.0，導入「歷史酒單 (軟刪除)」機制，喝光的酒會被封存並保留留言心得
 import { 
   getAuth, 
   signInWithPopup, 
@@ -25,7 +25,7 @@ import {
   Ghost, Pencil, Trash2, Lock, Save, MinusCircle, FilePlus, AlertTriangle,
   Database, Download, Filter, Search, Clock, CheckSquare,
   User, StickyNote, ArrowRight, Calculator, Link as LinkIcon, Youtube,
-  BookOpen, FileJson, UploadCloud, Library, Share, ArrowUp, ArrowDown, Wrench, RefreshCw, FileText, CheckCircle, Archive
+  BookOpen, FileJson, UploadCloud, Library, Share, ArrowUp, ArrowDown, Wrench, RefreshCw, FileText, CheckCircle, Archive, BookMarked
 } from 'lucide-react';
 
 // ==========================================
@@ -433,7 +433,7 @@ const App = () => {
           <div className="flex items-center gap-3">
             {showImage ? <img src={BAND_LOGO_BASE64} alt="Logo" className="w-9 h-9 rounded-xl object-contain bg-white shadow-sm" onError={() => setImgError(true)} /> : <BandLogo />}
             <span className="font-bold text-lg tracking-wide text-[#77ABC0]">{BAND_NAME}</span>
-            <span className="text-[9px] bg-[#E8F1E9] text-[#5F7A61] px-1.5 py-0.5 rounded-full font-bold ml-1">v6.3</span>
+            <span className="text-[9px] bg-[#E8F1E9] text-[#5F7A61] px-1.5 py-0.5 rounded-full font-bold ml-1">v6.4</span>
           </div>
           <div className="flex items-center gap-2">
             {role.admin && <span className="bg-rose-100 text-rose-600 text-[10px] px-2 py-0.5 rounded-full font-bold">Admin</span>}
@@ -1338,29 +1338,37 @@ const AlcoholFeeCalculator = ({ members = [], settings = {} }) => {
   );
 };
 
+// 🛡️ v6.4 修正：酒櫃升級 3.0，導入「歷史酒單 (軟刪除)」機制
 const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role = {}, user }) => {
   const [tab, setTab] = useState('list'); 
   const [showAdd, setShowAdd] = useState(false);
   const [editingComment, setEditingComment] = useState({ alcoholId: null, index: null, text: '' });
   const [newCommentMap, setNewCommentMap] = useState({});
+  const [showHistory, setShowHistory] = useState(false); // 控制是否展開歷史酒單
 
   const today = new Date().toISOString().split('T')[0];
   const [batchDate, setBatchDate] = useState(today);
   const [batchItems, setBatchItems] = useState([
       { name: '', type: '啤酒', level: 100, rating: 5, note: '' }
   ]);
-  
-  // 盤點狀態與過渡動畫狀態
   const [isInventoryMode, setIsInventoryMode] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
+  const [isSavingInventory, setIsSavingInventory] = useState(false);
 
   const alcoholOptions = Array.isArray(settings?.alcoholTypes) ? settings.alcoholTypes : ['紅酒', '白酒', '清酒', '氣泡酒', '啤酒', '威士忌', '其他'];
   const safeAlcohols = Array.isArray(alcohols) ? alcohols : [];
 
-  const activeAlcohols = safeAlcohols.filter(a => a.date !== 'archived');
-  const archivedAlcohols = safeAlcohols.filter(a => a.date === 'archived');
+  // --- v6.4 資料分群邏輯 (加入 isEmptied 判斷) ---
+  // 1. 歷史酒單：已清空的酒
+  const historyAlcohols = safeAlcohols.filter(a => a.isEmptied === true);
   
-  const groupedAlcohols = activeAlcohols.reduce((acc, curr) => {
+  // 2. 活躍酒單：還沒喝完的酒
+  const activeAlcohols = safeAlcohols.filter(a => a.isEmptied !== true);
+  
+  // 活躍酒單中，再區分「新進批次」與「已盤點庫存」
+  const archivedAlcohols = activeAlcohols.filter(a => a.date === 'archived');
+  const currentBatchAlcohols = activeAlcohols.filter(a => a.date !== 'archived');
+
+  const groupedAlcohols = currentBatchAlcohols.reduce((acc, curr) => {
       const d = curr.date || '未知日期';
       if (!acc[d]) acc[d] = [];
       acc[d].push(curr);
@@ -1404,6 +1412,7 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
                   level: parseInt(item.level),
                   note: item.note,
                   date: batchDate, 
+                  isEmptied: false, // 預設未清空
                   comments: [],
                   createdAt: serverTimestamp()
               });
@@ -1412,7 +1421,6 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
           await batch.commit();
           setShowAdd(false);
           setBatchItems([{ name: '', type: '啤酒', level: 100, rating: 5, note: '' }]);
-          alert("✅ 批次進貨成功！");
       } catch (error) {
           console.error(error);
           alert("❌ 儲存失敗：" + error.message);
@@ -1423,8 +1431,9 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
 
   const startInventory = () => {
       const initialState = {};
-      safeAlcohols.forEach(a => {
-          initialState[a.id] = { level: a.level, toDelete: false };
+      // 只盤點未喝完的酒
+      activeAlcohols.forEach(a => {
+          initialState[a.id] = { level: a.level, toEmpty: false };
       });
       setInventoryState(initialState);
       setIsInventoryMode(true);
@@ -1435,10 +1444,9 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
       setInventoryState({});
   };
 
-  // v6.3 修正：無縫儲存盤點結果 (不跳 Confirm/Alert，加入延遲過渡)
   const saveInventory = async () => {
       if (!db) return;
-      setIsSaving(true); // 觸發儲存中的 UI 狀態
+      setIsSavingInventory(true);
 
       try {
           const batch = writeBatch(db);
@@ -1446,8 +1454,13 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
               const state = inventoryState[id];
               const docRef = getDocRef(db, 'alcohol', id);
               
-              if (state.toDelete || state.level <= 0) {
-                  batch.delete(docRef);
+              // v6.4 修正：不再 deleteDoc，而是標記為 isEmptied: true
+              if (state.toEmpty || state.level <= 0) {
+                  batch.update(docRef, { 
+                      isEmptied: true, 
+                      level: 0,
+                      date: 'history' 
+                  });
               } else {
                   batch.update(docRef, { 
                       level: state.level,
@@ -1457,21 +1470,17 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
           });
 
           await batch.commit();
-          
-          // 延遲 400 毫秒讓使用者看到「儲存中...」的動畫，提升安心感
-          setTimeout(() => {
-              setIsInventoryMode(false);
-              setIsSaving(false);
-          }, 400);
-
+          setIsInventoryMode(false);
       } catch (error) {
           console.error(error);
           alert("❌ 盤點失敗：" + error.message);
-          setIsSaving(false);
+      } finally {
+          setIsSavingInventory(false);
       }
   };
 
-  const handleDelete = async (id) => { if (!db || !confirm("確定刪除此酒品？")) return; await deleteDoc(getDocRef(db, 'alcohol', id)); };
+  // 真正的物理刪除 (僅限管理員在歷史區使用)
+  const handleHardDelete = async (id) => { if (!db || !confirm("⚠️ 確定要永久刪除此酒品與所有留言？此操作無法復原。")) return; await deleteDoc(getDocRef(db, 'alcohol', id)); };
   
   const handleAddComment = async (id) => { 
       const text = newCommentMap[id];
@@ -1509,21 +1518,38 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
   };
 
   const renderAlcoholCard = (a) => (
-      <div key={a.id} className="bg-white p-5 rounded-[28px] border border-[#E0E0D9] shadow-sm flex flex-col gap-3 relative group">
+      <div key={a.id} className={`bg-white p-5 rounded-[28px] border shadow-sm flex flex-col gap-3 relative group transition-all ${a.isEmptied ? 'border-slate-200 opacity-80' : 'border-[#E0E0D9]'}`}>
          <div className="flex gap-4 items-start">
-            <div className="bg-[#F0EEE6] w-16 h-20 rounded-2xl flex items-center justify-center shrink-0"><Wine className="text-[#D6C592]" size={32} /></div>
-            <div className="flex-1">
-                <h3 className="font-bold text-lg text-[#725E77]">{a.name}</h3>
-                <p className="text-xs font-bold text-[#8B8C89] mb-1">{a.type}</p>
-                <div className="w-full h-1.5 bg-[#F0F4F5] rounded-full overflow-hidden mb-2">
-                    <div className="h-full bg-[#D6C592]" style={{width: `${a.level}%`}}></div>
-                </div>
-                <div className="text-xs text-[#6E7F9B]">{a.note}</div>
+            <div className={`w-16 h-20 rounded-2xl flex items-center justify-center shrink-0 ${a.isEmptied ? 'bg-slate-100 grayscale' : 'bg-[#F0EEE6]'}`}>
+                <Wine className={a.isEmptied ? "text-slate-400" : "text-[#D6C592]"} size={32} />
             </div>
-            {role.alcohol && <button onClick={() => handleDelete(a.id)} className="text-[#BC8F8F] opacity-0 group-hover:opacity-100 transition"><Trash2 size={16}/></button>}
+            <div className="flex-1">
+                <div className="flex items-center gap-2">
+                    <h3 className={`font-bold text-lg ${a.isEmptied ? 'text-slate-500 line-through decoration-slate-300' : 'text-[#725E77]'}`}>{a.name}</h3>
+                    {a.isEmptied && <span className="text-[9px] bg-slate-200 text-slate-500 px-1.5 py-0.5 rounded font-bold">已喝光</span>}
+                </div>
+                <p className={`text-xs font-bold mb-1 ${a.isEmptied ? 'text-slate-400' : 'text-[#8B8C89]'}`}>{a.type}</p>
+                
+                {/* 歷史酒單不顯示剩餘量拉桿 */}
+                {!a.isEmptied && (
+                    <div className="w-full h-1.5 bg-[#F0F4F5] rounded-full overflow-hidden mb-2">
+                        <div className="h-full bg-[#D6C592]" style={{width: `${a.level}%`}}></div>
+                    </div>
+                )}
+                <div className={`text-xs ${a.isEmptied ? 'text-slate-400' : 'text-[#6E7F9B]'}`}>{a.note}</div>
+            </div>
+            
+            {/* 只有管理員可以在歷史酒單中真正刪除資料 */}
+            {role.admin && a.isEmptied && (
+                <button onClick={() => handleHardDelete(a.id)} className="text-red-300 hover:text-red-500 transition"><Trash2 size={16}/></button>
+            )}
+            {/* 未清空的酒，仍提供一般刪除按鈕 (方便輸入錯誤時刪除) */}
+            {role.alcohol && !a.isEmptied && (
+                <button onClick={() => handleHardDelete(a.id)} className="text-[#BC8F8F] opacity-0 group-hover:opacity-100 transition"><Trash2 size={16}/></button>
+            )}
          </div>
          
-         <div className="pt-2 border-t border-[#F0F4F5]">
+         <div className={`pt-2 border-t ${a.isEmptied ? 'border-slate-100' : 'border-[#F0F4F5]'}`}>
             {(a.comments || []).map((c, idx) => (
                 <div key={idx} className="mb-2 group/comment">
                     {editingComment.alcoholId === a.id && editingComment.index === idx ? (
@@ -1533,8 +1559,762 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
                             <button onClick={() => setEditingComment({ alcoholId: null, index: null, text: '' })} className="text-[#BC8F8F] hover:bg-white p-1 rounded"><X size={16}/></button>
                         </div>
                     ) : (
-                        <div className="text-sm text-[#6E7F9B] flex justify-between items-start">
-                            <span className="leading-snug"><span className="font-bold text-[#725E77]">{c.user}:</span> {c.text}</span>
+                        <div className={`text-sm flex justify-between items-start ${a.isEmptied ? 'text-slate-500' : 'text-[#6E7F9B]'}`}>
+                            <span className="leading-snug"><span className="font-bold">{c.user}:</span> {c.text}</span>
                             {checkPermission(c.uid) && (
                                 <div className="flex gap-1 opacity-0 group-hover/comment:opacity-100 transition-opacity">
                                     <button onClick={() => startEditComment(a.id, c, idx)} className="text-[#77ABC0] p-0.5"><Pencil size={12}/></button>
+                                    <button onClick={() => handleDeleteComment(a.id, c, idx)} className="text-[#BC8F8F] p-0.5"><Trash2 size={12}/></button>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            ))}
+            <div className="flex gap-2 mt-3 items-center">
+              <input className={`w-full p-2 rounded-xl text-sm outline-none border border-transparent focus:border-[#77ABC0]/30 transition ${a.isEmptied ? 'bg-slate-50 placeholder-slate-400 text-slate-600' : 'bg-[#FDFBF7]'}`} placeholder="寫下品飲心得..." value={newCommentMap[a.id] || ''} onChange={(e) => setNewCommentMap({ ...newCommentMap, [a.id]: e.target.value })} onKeyDown={(e) => e.key === 'Enter' && handleAddComment(a.id)} />
+              <button onClick={() => handleAddComment(a.id)} className={`p-2 rounded-xl transition ${newCommentMap[a.id] ? 'bg-[#77ABC0] text-white shadow-md' : 'bg-[#F0F4F5] text-[#C5B8BF]'}`} disabled={!newCommentMap[a.id]}><ArrowRight size={18} /></button>
+            </div>
+         </div>
+      </div>
+  );
+
+  return (
+    <div className="space-y-4 animate-in slide-in-from-right-8">
+      <div className="flex bg-[#E0E0D9] p-1 rounded-xl mb-2">
+          <button onClick={() => setTab('list')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition ${tab === 'list' ? 'bg-white shadow text-[#77ABC0]' : 'text-[#C5B8BF]'}`}>酒櫃庫存</button>
+          <button onClick={() => setTab('calculator')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition ${tab === 'calculator' ? 'bg-white shadow text-[#77ABC0]' : 'text-[#C5B8BF]'}`}>補貨計算</button>
+      </div>
+
+      {tab === 'list' ? (
+        <div className="space-y-4">
+          {/* 操作按鈕區 */}
+          {role.alcohol && !isInventoryMode && (
+              <div className="flex gap-2">
+                  <button onClick={() => { setShowAdd(!showAdd); setBatchDate(today); setBatchItems([{ name: '', type: '啤酒', level: 100, rating: 5, note: '' }]); }} className="flex-1 py-3 bg-white text-[#77ABC0] font-bold text-xs flex items-center justify-center gap-1 border border-[#77ABC0] rounded-2xl hover:bg-[#F0F4F5] transition"><Plus size={14}/> 批次進貨</button>
+                  {activeAlcohols.length > 0 && <button onClick={startInventory} className="flex-1 py-3 bg-[#725E77] text-white font-bold text-xs flex items-center justify-center gap-1 rounded-2xl shadow-md hover:bg-[#5a4a5e] transition"><ClipboardList size={14}/> 進行盤點</button>}
+              </div>
+          )}
+
+          {/* 批次新增表單 */}
+          {showAdd && !isInventoryMode && (
+              <div className="bg-white p-5 rounded-[28px] border-2 border-[#77ABC0] shadow-lg space-y-4 animate-in fade-in slide-in-from-top-4">
+                  <div className="flex justify-between items-center">
+                      <h3 className="font-bold text-[#725E77]">📦 批次進貨</h3>
+                      <input type="date" className="bg-[#FDFBF7] p-2 rounded-lg text-sm border border-[#E0E0D9] text-[#725E77] font-bold outline-none" value={batchDate} onChange={e => setBatchDate(e.target.value)} />
+                  </div>
+                  
+                  <div className="space-y-3">
+                      {batchItems.map((item, index) => (
+                          <div key={index} className="bg-[#F0F4F5] p-3 rounded-xl relative border border-[#A8D8E2]/50">
+                              {batchItems.length > 1 && <button onClick={() => handleRemoveBatchItem(index)} className="absolute -top-2 -right-2 bg-red-100 text-red-500 rounded-full p-1"><X size={14}/></button>}
+                              <div className="flex gap-2 mb-2">
+                                  <input className="flex-1 bg-white p-2 rounded-lg text-sm outline-none" placeholder="酒名 (必填)" value={item.name} onChange={e => handleUpdateBatchItem(index, 'name', e.target.value)} />
+                                  <select className="w-24 bg-white p-2 rounded-lg text-sm outline-none" value={item.type} onChange={e => handleUpdateBatchItem(index, 'type', e.target.value)}>
+                                      {alcoholOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                                  </select>
+                              </div>
+                              {item.type === '其他' && <input className="w-full bg-white p-2 rounded-lg text-sm mb-2 outline-none" placeholder="輸入自訂種類" value={item.customType || ''} onChange={e => handleUpdateBatchItem(index, 'customType', e.target.value)} />}
+                              <div className="flex items-center gap-2 text-xs text-[#725E77] font-bold mb-2">
+                                  <span>剩餘量: {item.level}%</span>
+                                  <input type="range" min="0" max="100" className="flex-1" value={item.level} onChange={e => handleUpdateBatchItem(index, 'level', e.target.value)} />
+                              </div>
+                              <input className="w-full bg-white p-2 rounded-lg text-sm outline-none" placeholder="備註 (選填)..." value={item.note} onChange={e => handleUpdateBatchItem(index, 'note', e.target.value)} />
+                          </div>
+                      ))}
+                  </div>
+
+                  <button onClick={handleAddBatchItem} className="w-full py-3 border-2 border-dashed border-[#77ABC0]/50 text-[#77ABC0] rounded-xl font-bold flex justify-center items-center gap-1 hover:bg-[#F0F4F5] transition"><Plus size={14}/> 新增下一支</button>
+                  <div className="flex gap-2 pt-2"><button onClick={() => setShowAdd(false)} className="flex-1 p-3 rounded-xl text-[#C5B8BF] font-bold hover:bg-slate-50">取消</button><button onClick={handleSaveBatch} className="flex-1 p-3 bg-[#77ABC0] text-white rounded-xl font-bold shadow-lg hover:bg-[#6699af]">全部儲存</button></div>
+              </div>
+          )}
+
+          {/* 盤點模式介面 */}
+          {isInventoryMode && (
+              <div className="bg-[#FFF9DB] p-5 rounded-[28px] border-2 border-[#D6C592] shadow-lg animate-in fade-in">
+                  <div className="flex justify-between items-center mb-4">
+                      <h3 className="font-bold text-[#8C7A35] flex items-center gap-2"><ClipboardList size={20}/> 快速盤點模式</h3>
+                      <span className="text-xs bg-white text-[#8C7A35] px-2 py-1 rounded-lg font-bold shadow-sm">{activeAlcohols.length} 支</span>
+                  </div>
+                  <div className="space-y-2 mb-4 max-h-[60vh] overflow-y-auto pr-1">
+                      {activeAlcohols.map(a => {
+                          const state = inventoryState[a.id];
+                          if (!state) return null;
+                          const isEmptied = state.toEmpty || state.level <= 0;
+
+                          return (
+                              <div key={a.id} className={`bg-white p-3 rounded-xl border flex items-center gap-3 transition-all ${isEmptied ? 'opacity-70 border-slate-300 bg-slate-50' : 'border-[#E0E0D9]'}`}>
+                                  <div className="flex-1 min-w-0">
+                                      <div className={`font-bold text-sm truncate ${isEmptied ? 'line-through text-slate-500' : 'text-[#725E77]'}`}>{a.name}</div>
+                                      {!isEmptied && (
+                                          <div className="flex items-center gap-2 mt-1">
+                                              <span className="text-[10px] text-[#C5B8BF] font-bold w-8">{state.level}%</span>
+                                              <input type="range" min="0" max="100" step="5" value={state.level} onChange={(e) => setInventoryState({...inventoryState, [a.id]: { ...state, level: parseInt(e.target.value) }})} className="flex-1 accent-[#D6C592]" />
+                                          </div>
+                                      )}
+                                      {isEmptied && <div className="text-[10px] text-slate-500 font-bold mt-1">盤點後將移至歷史酒單</div>}
+                                  </div>
+                                  <button onClick={() => setInventoryState({...inventoryState, [a.id]: { ...state, toEmpty: !state.toEmpty }})} className={`w-12 h-12 rounded-xl flex flex-col items-center justify-center shrink-0 transition ${isEmptied ? 'bg-slate-700 text-white shadow-inner' : 'bg-[#F0F4F5] text-[#C5B8BF] hover:bg-slate-200 hover:text-slate-700'}`}>
+                                      <Wine size={18}/>
+                                      <span className="text-[9px] font-bold mt-0.5">喝光</span>
+                                  </button>
+                              </div>
+                          );
+                      })}
+                  </div>
+                  <div className="flex gap-2">
+                      <button onClick={cancelInventory} disabled={isSavingInventory} className="flex-1 p-3 rounded-xl bg-white text-[#C5B8BF] font-bold border border-[#E0E0D9] hover:bg-slate-50 transition disabled:opacity-50">返回 (不儲存)</button>
+                      <button onClick={saveInventory} disabled={isSavingInventory} className="flex-[2] p-3 rounded-xl bg-[#8C7A35] text-white font-bold shadow-lg flex items-center justify-center gap-2 hover:bg-[#7a6a2e] transition disabled:opacity-75">
+                          {isSavingInventory ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle size={16} />}
+                          {isSavingInventory ? '儲存中...' : '💾 儲存並返回清單'}
+                      </button>
+                  </div>
+              </div>
+          )}
+
+          {/* 正常顯示模式 (分區顯示) */}
+          {!isInventoryMode && (
+              <div className="space-y-6">
+                  {/* 今日/未盤點批次 */}
+                  {sortedDates.map(date => (
+                      <div key={date} className="space-y-3">
+                          <div className="flex items-center gap-2 pl-2">
+                              <Calendar size={16} className="text-[#77ABC0]"/>
+                              <h3 className="font-bold text-sm text-[#77ABC0] tracking-wider">{date} 新增</h3>
+                          </div>
+                          <div className="grid gap-3">
+                              {groupedAlcohols[date].map(renderAlcoholCard)}
+                          </div>
+                      </div>
+                  ))}
+
+                  {/* 庫存區 (Archived) */}
+                  {archivedAlcohols.length > 0 && (
+                      <div className="space-y-3 pt-4 border-t-2 border-dashed border-[#E0E0D9]">
+                          <div className="flex items-center gap-2 pl-2">
+                              <Archive size={16} className="text-[#D6C592]"/>
+                              <h3 className="font-bold text-sm text-[#8C7A35] tracking-wider">🍾 寄酒 / 庫存中</h3>
+                          </div>
+                          <div className="grid gap-3">
+                              {archivedAlcohols.map(renderAlcoholCard)}
+                          </div>
+                      </div>
+                  )}
+
+                  {/* 歷史酒單區 (已喝光) */}
+                  {historyAlcohols.length > 0 && (
+                      <div className="space-y-3 pt-4 border-t-2 border-dashed border-slate-200">
+                          <button onClick={() => setShowHistory(!showHistory)} className="w-full flex items-center justify-between p-2 hover:bg-slate-100 rounded-xl transition">
+                              <div className="flex items-center gap-2">
+                                  <BookMarked size={16} className="text-slate-400"/>
+                                  <h3 className="font-bold text-sm text-slate-500 tracking-wider">📖 歷史酒單 (已喝光)</h3>
+                                  <span className="text-xs bg-slate-200 text-slate-500 px-2 py-0.5 rounded-full">{historyAlcohols.length}</span>
+                              </div>
+                              <ChevronDown size={16} className={`text-slate-400 transition-transform ${showHistory ? 'rotate-180' : ''}`} />
+                          </button>
+                          
+                          {showHistory && (
+                              <div className="grid gap-3 animate-in fade-in">
+                                  {historyAlcohols.map(renderAlcoholCard)}
+                              </div>
+                          )}
+                      </div>
+                  )}
+
+                  {safeAlcohols.length === 0 && !showAdd && (
+                      <div className="text-center py-10 border-2 border-dashed border-[#E0E0D9] rounded-[28px] text-[#C5B8BF]">
+                          <Wine size={40} className="mx-auto mb-2 opacity-50" />
+                          <p className="text-sm font-bold">酒櫃目前空空如也</p>
+                      </div>
+                  )}
+              </div>
+          )}
+        </div>
+      ) : <AlcoholFeeCalculator members={members} settings={settings} />}
+    </div>
+  );
+};
+
+const TechView = ({ songs = [], db, role, user }) => {
+  const [viewMode, setViewMode] = useState('list'); 
+  const [filter, setFilter] = useState('all'); 
+  const [showAdd, setShowAdd] = useState(false);
+  const [newSong, setNewSong] = useState({ title: '', artist: '', link: '', type: 'cover' });
+  const [editingSongId, setEditingSongId] = useState(null);
+  const [editForm, setEditForm] = useState({});
+  
+  const [newLinkUrl, setNewLinkUrl] = useState("");
+  const [newLinkLabel, setNewLinkLabel] = useState("");
+
+  const safeSongs = Array.isArray(songs) ? songs : [];
+  const filteredSongs = filter === 'all' ? safeSongs : safeSongs.filter(s => String(s.type || 'cover').toLowerCase() === filter);
+  
+  const handleAdd = async () => { 
+      if (!newSong.title || !db) return; 
+      
+      let finalLinks = [...(newSong.links || [])];
+      // v6.1 防呆修正：自動收納尚未點擊 + 號的連結
+      if (newLinkUrl.trim()) {
+          finalLinks.push({ url: newLinkUrl.trim(), label: newLinkLabel.trim() || '連結' });
+      }
+
+      await addDoc(getCollectionRef(db, 'songs'), { 
+          ...newSong, 
+          links: finalLinks,
+          link: finalLinks.length > 0 ? finalLinks[0].url : "",
+          user: user.displayName, 
+          uid: user.uid 
+      }); 
+      setShowAdd(false); 
+      setNewSong({ title: '', artist: '', link: '', type: 'cover', links: [] }); 
+      setNewLinkUrl("");
+      setNewLinkLabel("");
+  };
+
+  const handleDelete = async (id) => { if (!db || !confirm("刪除此資源？")) return; await deleteDoc(getDocRef(db, 'songs', id)); };
+  
+  const startEdit = (song) => {
+    if (role.admin || song.uid === user.uid) {
+        setEditingSongId(song.id);
+        let currentLinks = Array.isArray(song.links) ? song.links : [];
+        if (song.link && currentLinks.length === 0) {
+            currentLinks = [{ url: song.link, label: "連結" }];
+        }
+        setEditForm({ ...song, links: currentLinks });
+        setNewLinkUrl("");
+        setNewLinkLabel("");
+    } else {
+        alert("只能修改自己上傳的資源喔！");
+    }
+  };
+
+  const cancelEdit = () => {
+    setEditingSongId(null);
+    setEditForm({});
+    setNewLinkUrl("");
+    setNewLinkLabel("");
+  };
+
+  const saveEdit = async () => {
+    if (!editForm.title || !db) return;
+    
+    let finalLinks = [...(editForm.links || [])];
+    // v6.1 防呆修正：自動收納尚未點擊 + 號的連結
+    if (newLinkUrl.trim()) {
+        finalLinks.push({ url: newLinkUrl.trim(), label: newLinkLabel.trim() || '連結' });
+    }
+
+    await updateDoc(getDocRef(db, 'songs', editingSongId), {
+        ...editForm,
+        links: finalLinks,
+        link: finalLinks.length > 0 ? finalLinks[0].url : ""
+    });
+    setEditingSongId(null);
+    setNewLinkUrl("");
+    setNewLinkLabel("");
+  };
+
+  const addLinkToEditForm = () => {
+      if (!newLinkUrl?.trim()) { alert("請輸入連結！"); return; }
+      const label = newLinkLabel?.trim() || "連結";
+      setEditForm({ 
+          ...editForm, 
+          links: [...(editForm.links || []), { url: newLinkUrl.trim(), label }],
+      });
+      setNewLinkUrl("");
+      setNewLinkLabel("");
+  };
+
+  const removeLinkFromEditForm = (idx) => {
+      const newLinks = [...(editForm.links || [])];
+      newLinks.splice(idx, 1);
+      setEditForm({ ...editForm, links: newLinks });
+  };
+
+  const addLinkToState = (isEditMode) => {
+      if (!newLinkUrl.trim()) { alert("請輸入連結！"); return; }
+      const label = newLinkLabel.trim() || "連結";
+      const newLinkObj = { url: newLinkUrl.trim(), label };
+      
+      if (isEditMode) {
+          setEditForm({ ...editForm, links: [...(editForm.links || []), newLinkObj] });
+      } else {
+          setNewSong({ ...newSong, links: [...(newSong.links || []), newLinkObj] });
+      }
+      setNewLinkUrl("");
+      setNewLinkLabel("");
+  };
+  
+  const removeLinkFromState = (idx, isEditMode) => {
+      if (isEditMode) {
+          const newLinks = [...(editForm.links || [])];
+          newLinks.splice(idx, 1);
+          setEditForm({ ...editForm, links: newLinks });
+      } else {
+          const newLinks = [...(newSong.links || [])];
+          newLinks.splice(idx, 1);
+          setNewSong({ ...newSong, links: newLinks });
+      }
+  };
+
+  return (
+    <div className="space-y-4 animate-in slide-in-from-right-8">
+      <div className="flex justify-between items-center px-1"><h2 className="text-2xl font-bold text-[#725E77]">資源分享</h2><div className="flex bg-[#E0E0D9]/50 p-1 rounded-lg"><button onClick={() => setViewMode('list')} className={`p-1.5 rounded-md ${viewMode === 'list' ? 'bg-white text-[#725E77]' : 'text-[#C5B8BF]'}`}><List size={16}/></button><button onClick={() => setViewMode('grid')} className={`p-1.5 rounded-md ${viewMode === 'grid' ? 'bg-white text-[#725E77]' : 'text-[#C5B8BF]'}`}><LayoutGrid size={16}/></button></div></div>
+      <div className="flex gap-2 overflow-x-auto pb-1">{['all', 'cover', 'tech', 'gear'].map(f => (<button key={f} onClick={() => setFilter(f)} className={`px-4 py-1.5 rounded-full text-xs font-bold capitalize whitespace-nowrap transition ${filter === f ? 'bg-[#77ABC0] text-white' : 'bg-white border border-[#E0E0D9] text-[#C5B8BF]'}`}>{f}</button>))}</div>
+      <button onClick={() => setShowAdd(true)} className="w-full py-3 text-[#77ABC0] font-bold text-xs flex items-center justify-center gap-1 border border-dashed border-[#77ABC0]/50 hover:bg-[#77ABC0]/5 rounded-2xl transition"><Plus size={14}/> 分享資源</button>
+      {showAdd && (<div className="bg-white p-4 rounded-[24px] border border-[#77ABC0] space-y-3"><input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="標題" value={newSong.title} onChange={e=>setNewSong({...newSong, title: e.target.value})} /><input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="說明" value={newSong.artist} onChange={e=>setNewSong({...newSong, artist: e.target.value})} /><select className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" value={newSong.type} onChange={e=>setNewSong({...newSong, type: e.target.value})}><option value="cover">Cover</option><option value="tech">Tech</option><option value="gear">Gear</option></select>
+          <div className="bg-[#FDFBF7] p-2 rounded-lg space-y-2">
+                 <div className="text-xs font-bold text-[#C5B8BF] mb-1">連結列表</div>
+                 {(newSong.links || []).map((l, i) => (
+                     <div key={i} className="flex justify-between items-center text-xs bg-white p-1 rounded border">
+                         <span className="truncate flex-1">{l.label}: {l.url}</span>
+                         <button onClick={() => removeLinkFromState(i, false)}><X size={12} className="text-red-400"/></button>
+                     </div>
+                 ))}
+                 <div className="flex gap-1 items-center">
+                     <input className="flex-1 bg-white p-1.5 text-xs border rounded outline-none" placeholder="網址..." value={newLinkUrl} onChange={e=>setNewLinkUrl(e.target.value)}/>
+                     <input className="w-16 bg-white p-1.5 text-xs border rounded outline-none" placeholder="名稱" value={newLinkLabel} onChange={e=>setNewLinkLabel(e.target.value)}/>
+                     <button onClick={() => addLinkToState(false)} className="bg-[#77ABC0] text-white p-1.5 rounded"><Plus size={14}/></button>
+                 </div>
+          </div>
+          <div className="flex gap-2"><button onClick={() => setShowAdd(false)} className="flex-1 p-2 text-xs text-slate-400">取消</button><button onClick={handleAdd} className="flex-1 p-2 bg-[#77ABC0] text-white rounded-lg text-xs font-bold">發布</button></div></div>)}
+      
+      <div className={viewMode === 'grid' ? "grid grid-cols-2 gap-3" : "space-y-3"}>
+        {filteredSongs.map(s => {
+            const isEditing = editingSongId === s.id;
+            const canEdit = role.admin || s.uid === user.uid;
+            
+            let displayLinks = Array.isArray(s.links) ? s.links : [];
+            if (s.link && displayLinks.length === 0) displayLinks = [{ url: s.link, label: "連結" }];
+
+            if (isEditing) {
+                return (
+                    <div key={s.id} className="bg-white p-4 rounded-[24px] border border-[#77ABC0] space-y-2 shadow-md">
+                        <input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" value={editForm.title} onChange={e => setEditForm({...editForm, title: e.target.value})} placeholder="標題" />
+                        <input className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" value={editForm.artist} onChange={e => setEditForm({...editForm, artist: e.target.value})} placeholder="說明" />
+                        <select className="w-full bg-[#FDFBF7] p-2 rounded-lg text-sm" value={editForm.type} onChange={e => setEditForm({...editForm, type: e.target.value})}>
+                            <option value="cover">Cover</option><option value="tech">Tech</option><option value="gear">Gear</option>
+                        </select>
+                        
+                        <div className="bg-[#FDFBF7] p-2 rounded-lg space-y-2">
+                             <div className="text-xs font-bold text-[#C5B8BF] mb-1">連結列表</div>
+                             {(editForm.links || []).map((l, i) => (
+                                 <div key={i} className="flex justify-between items-center text-xs bg-white p-1 rounded border">
+                                     <span className="truncate flex-1">{l.label}: {l.url}</span>
+                                     <button onClick={() => removeLinkFromEditForm(i)}><X size={12} className="text-red-400"/></button>
+                                 </div>
+                             ))}
+                             <div className="flex gap-1 items-center">
+                                 <input className="flex-1 bg-white p-1.5 text-xs border rounded outline-none" placeholder="網址 (https://...)" value={newLinkUrl} onChange={e=>setNewLinkUrl(e.target.value)}/>
+                                 <input className="w-16 bg-white p-1.5 text-xs border rounded outline-none" placeholder="名稱" value={newLinkLabel} onChange={e=>setNewLinkLabel(e.target.value)}/>
+                                 <button onClick={addLinkToEditForm} className="bg-[#77ABC0] text-white p-1.5 rounded"><Plus size={14}/></button>
+                             </div>
+                        </div>
+
+                        <div className="flex gap-2">
+                            <button onClick={saveEdit} className="flex-1 p-2 bg-[#77ABC0] text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1"><Check size={14}/> 儲存</button>
+                            <button onClick={cancelEdit} className="flex-1 p-2 bg-[#FDFBF7] text-[#BC8F8F] rounded-lg text-xs font-bold flex items-center justify-center gap-1"><X size={14}/> 取消</button>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div key={s.id} className={`bg-white p-4 rounded-[24px] border border-[#E0E0D9] shadow-sm hover:shadow-md transition block relative group ${viewMode === 'list' ? 'flex items-center gap-4' : ''}`}>
+                    <div className="flex justify-between items-start">
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center mb-2 ${s.type === 'cover' ? 'bg-[#FDF2F2] text-[#BC8F8F]' : s.type === 'tech' ? 'bg-[#F0F4F5] text-[#6D8A96]' : 'bg-[#FFF9DB] text-[#D6C592]'}`}>
+                            {s.type === 'cover' ? <Headphones size={20}/> : s.type === 'tech' ? <Zap size={20}/> : <Gift size={20}/>}
+                        </div>
+                        {canEdit && (
+                            <div className="flex gap-1">
+                                 <button onClick={() => startEdit(s)} className="text-[#77ABC0] bg-white/80 p-1.5 rounded-full hover:bg-white shadow-sm transition"><Pencil size={14}/></button>
+                                 <button onClick={() => handleDelete(s.id)} className="text-[#BC8F8F] bg-white/80 p-1.5 rounded-full hover:bg-white shadow-sm transition"><Trash2 size={14}/></button>
+                            </div>
+                        )}
+                    </div>
+                    
+                    <div className="min-w-0 pr-2">
+                        <h4 className="font-bold text-[#725E77] truncate">{s.title}</h4>
+                        <p className="text-xs text-[#8B8C89]">{s.artist}</p>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2 mt-1">
+                        {displayLinks.length === 0 && <span className="text-xs text-[#C5B8BF] italic">無連結</span>}
+                        {displayLinks.map((l, i) => (
+                            <a key={i} href={l.url} target="_blank" className="text-[10px] bg-[#F0F4F5] text-[#725E77] px-2 py-1 rounded-full flex items-center gap-1 hover:bg-[#E0E7EA] hover:text-[#77ABC0] transition border border-transparent hover:border-[#77ABC0]/30">
+                                <LinkIcon size={10}/> {l.label || '連結'}
+                            </a>
+                        ))}
+                    </div>
+                </div>
+            );
+        })}
+      </div>
+    </div>
+  );
+};
+
+const LibraryView = ({ songs = [], repertoire = [], db, role, user }) => {
+    const [subTab, setSubTab] = useState('repertoire');
+    
+    return (
+        <div className="space-y-4 animate-in slide-in-from-right-8">
+            <div className="flex justify-between items-center px-1">
+                <h2 className="text-2xl font-bold text-[#725E77]">樂團資料庫</h2>
+            </div>
+            <div className="flex bg-[#E0E0D9] p-1 rounded-xl mb-4">
+                <button 
+                    onClick={() => setSubTab('repertoire')} 
+                    className={`flex-1 py-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-2 ${subTab === 'repertoire' ? 'bg-white shadow text-[#77ABC0]' : 'text-[#C5B8BF]'}`}
+                >
+                    <BookOpen size={16}/> 練團曲庫
+                </button>
+                <button 
+                    onClick={() => setSubTab('resources')} 
+                    className={`flex-1 py-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-2 ${subTab === 'resources' ? 'bg-white shadow text-[#77ABC0]' : 'text-[#C5B8BF]'}`}
+                >
+                    <UploadCloud size={16}/> 資源分享
+                </button>
+            </div>
+            
+            {subTab === 'repertoire' ? (
+                <RepertoireManager repertoire={repertoire} db={db} role={role} user={user} />
+            ) : (
+                <TechView songs={songs} db={db} role={role} user={user} />
+            )}
+        </div>
+    );
+};
+
+const RepertoireManager = ({ repertoire = [], db, role, user }) => {
+    const [search, setSearch] = useState('');
+    const [showAdd, setShowAdd] = useState(false);
+    const [editingSong, setEditingSong] = useState(null);
+    const [form, setForm] = useState({ title: '', artist: '', key: '', links: [], tags: '' });
+    
+    const [newLinkUrl, setNewLinkUrl] = useState("");
+    const [newLinkLabel, setNewLinkLabel] = useState("");
+
+    const safeRepertoire = Array.isArray(repertoire) ? repertoire : [];
+    const filteredSongs = safeRepertoire.filter(s => 
+        s.title?.toLowerCase().includes(search.toLowerCase()) || 
+        s.artist?.toLowerCase().includes(search.toLowerCase()) ||
+        s.tags?.toLowerCase().includes(search.toLowerCase())
+    );
+
+    const handleSave = async () => {
+        if (!form.title || !db) return;
+        
+        // v6.1 防呆修正：自動收納尚未點擊 + 號的連結
+        let finalLinks = [...(form.links || [])];
+        if (newLinkUrl.trim()) {
+            finalLinks.push({ url: newLinkUrl.trim(), label: newLinkLabel.trim() || '連結' });
+        }
+        const dataToSave = { ...form, links: finalLinks };
+
+        try {
+            if (editingSong) {
+                await updateDoc(getDocRef(db, 'repertoire', editingSong.id), dataToSave);
+            } else {
+                await addDoc(getCollectionRef(db, 'repertoire'), {
+                    ...dataToSave,
+                    createdBy: user.displayName,
+                    uid: user.uid, 
+                    createdAt: serverTimestamp()
+                });
+            }
+            setShowAdd(false);
+            setEditingSong(null);
+            setForm({ title: '', artist: '', key: '', links: [], tags: '' });
+            setNewLinkUrl("");
+            setNewLinkLabel("");
+        } catch (e) {
+            console.error(e);
+            alert("儲存失敗");
+        }
+    };
+
+    const handleDelete = async (id) => {
+        if (!confirm("確定要刪除這首歌嗎？")) return;
+        await deleteDoc(getDocRef(db, 'repertoire', id));
+    };
+    
+    const startEdit = (song) => {
+        setEditingSong(song);
+        let initLinks = Array.isArray(song.links) ? song.links : [];
+        if (initLinks.length === 0) {
+            if (song.youtube) initLinks.push({ label: 'YouTube', url: song.youtube });
+            if (song.sheet) initLinks.push({ label: '樂譜', url: song.sheet });
+        }
+        setForm({ ...song, links: initLinks });
+        setShowAdd(true);
+    };
+
+    const addLinkToForm = () => {
+        if (!newLinkUrl.trim()) { alert("請輸入連結！"); return; }
+        const label = newLinkLabel.trim() || "連結";
+        setForm({ ...form, links: [...(form.links || []), { url: newLinkUrl.trim(), label }] });
+        setNewLinkUrl("");
+        setNewLinkLabel("");
+    };
+
+    const removeLinkFromForm = (idx) => {
+        const newLinks = [...(form.links || [])];
+        newLinks.splice(idx, 1);
+        setForm({ ...form, links: newLinks });
+    };
+
+    return (
+        <div className="space-y-4">
+            <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[#C5B8BF]" size={16} />
+                <input 
+                    className="w-full bg-white border border-[#E0E0D9] pl-10 pr-4 py-3 rounded-xl text-sm outline-none focus:border-[#77ABC0]"
+                    placeholder="搜尋歌名、歌手或標籤..."
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                />
+            </div>
+
+            <button onClick={() => { setEditingSong(null); setForm({ title: '', artist: '', key: '', links: [], tags: '' }); setShowAdd(true); }} className="w-full py-3 text-[#77ABC0] font-bold text-xs flex items-center justify-center gap-1 border border-dashed border-[#77ABC0]/50 hover:bg-[#77ABC0]/5 rounded-2xl transition"><Plus size={14}/> 新增曲目</button>
+            
+            {showAdd && (
+                <div className="bg-white p-4 rounded-[24px] border border-[#77ABC0] space-y-3 animate-in fade-in slide-in-from-top-2">
+                    <h3 className="font-bold text-[#725E77] text-sm">{editingSong ? '編輯曲目' : '新增曲目'}</h3>
+                    <div className="grid grid-cols-2 gap-2">
+                        <input className="bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="歌名" value={form.title} onChange={e => setForm({...form, title: e.target.value})} />
+                        <input className="bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="原唱" value={form.artist} onChange={e => setForm({...form, artist: e.target.value})} />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                         <input className="bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="Key (Ex: Gm)" value={form.key} onChange={e => setForm({...form, key: e.target.value})} />
+                         <input className="bg-[#FDFBF7] p-2 rounded-lg text-sm" placeholder="標籤 (Ex: #新歌)" value={form.tags} onChange={e => setForm({...form, tags: e.target.value})} />
+                    </div>
+                    
+                    <div className="bg-[#FDFBF7] p-2 rounded-lg space-y-2">
+                        <div className="text-xs font-bold text-[#C5B8BF] mb-1">相關連結</div>
+                        {(form.links || []).map((l, i) => (
+                             <div key={i} className="flex justify-between items-center text-xs bg-white p-1 rounded border">
+                                 <div className="flex-1 truncate"><span className="font-bold">{l.label}:</span> {l.url}</div>
+                                 <button onClick={() => removeLinkFromForm(i)}><X size={12} className="text-red-400"/></button>
+                             </div>
+                        ))}
+                        <div className="flex gap-1 items-center">
+                             <input className="flex-1 bg-white p-1.5 text-xs border rounded outline-none" placeholder="網址 (https://...)" value={newLinkUrl} onChange={e=>setNewLinkUrl(e.target.value)}/>
+                             <input className="w-16 bg-white p-1.5 text-xs border rounded outline-none" placeholder="名稱" value={newLinkLabel} onChange={e=>setNewLinkLabel(e.target.value)}/>
+                             <button onClick={addLinkToForm} className="bg-[#77ABC0] text-white p-1.5 rounded"><Plus size={14}/></button>
+                        </div>
+                    </div>
+
+                    <div className="flex gap-2">
+                        <button onClick={() => setShowAdd(false)} className="flex-1 p-2 text-xs text-slate-400">取消</button>
+                        <button onClick={handleSave} className="flex-1 p-2 bg-[#77ABC0] text-white rounded-lg text-xs font-bold">儲存</button>
+                    </div>
+                </div>
+            )}
+
+            <div className="space-y-3">
+                {filteredSongs.map(s => {
+                    let displayLinks = Array.isArray(s.links) ? s.links : [];
+                    if (displayLinks.length === 0) {
+                        if (s.youtube) displayLinks.push({ label: 'YouTube', url: s.youtube });
+                        if (s.sheet) displayLinks.push({ label: '樂譜', url: s.sheet });
+                    }
+
+                    return (
+                        <div key={s.id} className="bg-white p-4 rounded-[20px] border border-[#E0E0D9] shadow-sm flex flex-col gap-2 group relative">
+                            <div className="flex justify-between items-start">
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 mb-1">
+                                        <h4 className="font-bold text-[#725E77] truncate text-lg">{s.title}</h4>
+                                        {s.key && <span className="bg-[#F0F4F5] text-[#6E7F9B] text-[10px] font-bold px-1.5 py-0.5 rounded">{s.key}</span>}
+                                    </div>
+                                    <div className="flex items-center gap-2 text-xs text-[#C5B8BF]">
+                                        <span>{s.artist}</span>
+                                        {s.tags && <span>• {s.tags}</span>}
+                                    </div>
+                                </div>
+                                
+                                <div className="flex gap-1 shrink-0 ml-2">
+                                    <button onClick={() => startEdit(s)} className="p-1.5 text-[#77ABC0] bg-white/80 rounded-full hover:bg-white shadow-sm transition"><Pencil size={14}/></button>
+                                    <button onClick={() => handleDelete(s.id)} className="p-1.5 text-[#BC8F8F] bg-white/80 rounded-full hover:bg-white shadow-sm transition"><Trash2 size={14}/></button>
+                                </div>
+                            </div>
+                            
+                            <div className="flex flex-wrap gap-2 mt-1">
+                                {displayLinks.length === 0 && <span className="text-xs text-[#C5B8BF] italic">無連結</span>}
+                                {displayLinks.map((l, i) => (
+                                    <a key={i} href={l.url} target="_blank" className="text-[10px] bg-[#F0F4F5] text-[#725E77] px-2 py-1 rounded-full flex items-center gap-1 hover:bg-[#E0E7EA] hover:text-[#77ABC0] transition border border-transparent hover:border-[#77ABC0]/30">
+                                        {l.label === 'YouTube' ? <Youtube size={12}/> : l.label.includes('譜') ? <BookOpen size={12}/> : <LinkIcon size={12}/>}
+                                        {l.label}
+                                    </a>
+                                ))}
+                            </div>
+                        </div>
+                    );
+                })}
+                {filteredSongs.length === 0 && <div className="text-center text-[#C5B8BF] text-xs py-8">沒有找到相關歌曲</div>}
+            </div>
+        </div>
+    );
+};
+
+const AdminDashboard = ({ members = [], logs = [], generalData = {}, db, alcohols = [], songs = [], repertoire = [] }) => {
+  const [tab, setTab] = useState('members');
+  const [alcoholTypes, setAlcoholTypes] = useState(Array.isArray(generalData.settings?.alcoholTypes) ? generalData.settings.alcoholTypes : []);
+  const [prankMessage, setPrankMessage] = useState(""); 
+
+  useEffect(() => {
+    if (generalData?.settings?.alcoholTypes && Array.isArray(generalData.settings.alcoholTypes)) {
+      setAlcoholTypes(generalData.settings.alcoholTypes);
+    }
+    if (generalData?.prankMessage) {
+        setPrankMessage(generalData.prankMessage);
+    } else {
+        setPrankMessage("👻 抓到了！"); 
+    }
+  }, [generalData]);
+
+  const handleUpdateSettings = async () => { await updateDoc(getDocRef(db, 'general', 'info'), { settings: { ...generalData.settings, alcoholTypes }, prankMessage }); alert("設定已更新"); };
+  
+  const handleExport = () => { 
+      const dataToExport = tab === 'members' ? members : logs; 
+      const formattedData = dataToExport.map(item => { if (tab === 'members') return { 暱稱: item.nickname, 本名: item.realName, 樂器: item.instrument, 生日: item.birthday, Email: item.email || '' }; else { const attendeesCount = members.filter(m => m.attendance?.includes(item.date)).length; const trackDetails = item.tracks?.map(t => `${t.title} ${t.comments?.length ? '(' + t.comments.map(c => c.user + ':' + c.text).join('/') + ')' : ''}`).join('; '); return { 日期: item.date, 地點: item.location, 出席人數: attendeesCount, 練習曲目: trackDetails, 備註: item.funNotes }; } }); 
+      exportToCSV(formattedData, `Band_${tab}_export.csv`); 
+  };
+  
+  const handleFullBackup = () => {
+      const backupData = {
+          version: "2.0",
+          timestamp: new Date().toISOString(),
+          members,
+          logs,
+          alcohols,
+          songs,
+          repertoire,
+          generalData
+      };
+      
+      const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `band_backup_${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+  };
+
+  const handleRestore = async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      
+      if (!confirm("⚠️ 警告：還原操作可能會覆蓋現有的同名資料。\n建議先進行備份。\n確定要繼續嗎？")) {
+          e.target.value = '';
+          return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+          try {
+              const data = JSON.parse(event.target.result);
+              console.log("Restoring data...", data);
+              
+              const restoreCollection = async (colName, items) => {
+                  if (!Array.isArray(items)) return;
+                  const promises = items.map(item => {
+                      const { id, ...rest } = item;
+                      if (id) return setDoc(getDocRef(db, colName, id), rest); 
+                      else return addDoc(getCollectionRef(db, colName), rest);
+                  });
+                  await Promise.all(promises);
+              };
+
+              await restoreCollection('members', data.members);
+              await restoreCollection('logs', data.logs);
+              await restoreCollection('alcohol', data.alcohols);
+              await restoreCollection('songs', data.songs);
+              await restoreCollection('repertoire', data.repertoire);
+              
+              if (data.generalData) {
+                  await setDoc(getDocRef(db, 'general', 'info'), data.generalData);
+              }
+              
+              alert("✅ 資料還原成功！請重新整理頁面。");
+          } catch (err) {
+              console.error(err);
+              alert("❌ 還原失敗：檔案格式錯誤或網路問題。");
+          }
+      };
+      reader.readAsText(file);
+  };
+
+  const handleDelete = async (collectionName, id) => { if (confirm("⚠️ 警告：這將永久刪除此筆資料！確定嗎？")) await deleteDoc(getDocRef(db, collectionName, id)); };
+  
+  const safeMembers = Array.isArray(members) ? members : [];
+  const safeLogs = Array.isArray(logs) ? logs : [];
+
+  return (
+    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 pb-20">
+      <div className="bg-white p-5 rounded-[32px] border border-[#E0E0D9] shadow-sm">
+        <h2 className="text-xl font-black text-[#725E77] flex items-center gap-2 mb-4"><Database size={24}/> 後台管理</h2>
+        <div className="flex gap-2 mb-4 overflow-x-auto pb-2">
+            <button onClick={() => setTab('members')} className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap ${tab === 'members' ? 'bg-[#77ABC0] text-white' : 'bg-[#F0F4F5]'}`}>成員</button>
+            <button onClick={() => setTab('logs')} className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap ${tab === 'logs' ? 'bg-[#77ABC0] text-white' : 'bg-[#F0F4F5]'}`}>紀錄</button>
+            <button onClick={() => setTab('settings')} className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap ${tab === 'settings' ? 'bg-[#77ABC0] text-white' : 'bg-[#F0F4F5]'}`}>設定</button>
+            <button onClick={() => setTab('data')} className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap ${tab === 'data' ? 'bg-[#77ABC0] text-white' : 'bg-[#F0F4F5]'}`}>資料維護</button>
+        </div>
+        
+        {tab === 'settings' && (
+            <div className="space-y-3">
+                <h3 className="font-bold text-[#725E77]">酒櫃分類</h3>
+                <textarea className="w-full h-24 p-3 bg-[#FDFBF7] rounded-xl text-xs" value={alcoholTypes.join(',')} onChange={e => setAlcoholTypes(e.target.value.split(','))} />
+                <h3 className="font-bold text-[#725E77]">惡作劇訊息</h3>
+                <input className="w-full p-3 bg-[#FDFBF7] rounded-xl text-xs" value={prankMessage} onChange={e => setPrankMessage(e.target.value)} />
+                <button onClick={handleUpdateSettings} className="w-full py-2 bg-[#77ABC0] text-white rounded-xl text-xs font-bold">儲存設定</button>
+            </div>
+        )}
+        
+        {tab === 'data' && (
+            <div className="space-y-4">
+                <div className="bg-[#F0F4F5] p-4 rounded-xl border border-[#E0E0D9]">
+                    <h3 className="font-bold text-[#725E77] mb-2 flex items-center gap-2"><Download size={16}/> 備份資料</h3>
+                    <p className="text-xs text-slate-500 mb-3">將所有樂團資料下載為 JSON 檔案妥善保存。</p>
+                    <button onClick={handleFullBackup} className="w-full py-2 bg-[#725E77] text-white rounded-lg text-xs font-bold">下載全站備份</button>
+                </div>
+                <div className="bg-[#FFF5F7] p-4 rounded-xl border border-[#F2D7DD]">
+                    <h3 className="font-bold text-[#BC8F8F] mb-2 flex items-center gap-2"><UploadCloud size={16}/> 還原資料</h3>
+                    <p className="text-xs text-slate-500 mb-3">從備份檔還原。注意：可能會覆蓋現有資料。</p>
+                    <label className="w-full py-2 bg-[#BC8F8F] text-white rounded-lg text-xs font-bold text-center block cursor-pointer">
+                        選擇備份檔並還原
+                        <input type="file" accept=".json" onChange={handleRestore} className="hidden" />
+                    </label>
+                </div>
+            </div>
+        )}
+
+        {(tab === 'members' || tab === 'logs') && (
+            <button onClick={handleExport} className="w-full py-3 bg-[#E8F1E9] text-[#5F7A61] rounded-xl text-xs font-bold flex items-center justify-center gap-2"><Download size={16}/> 匯出 CSV</button>
+        )}
+      </div>
+      
+      {(tab === 'members' || tab === 'logs') && (
+          <div className="bg-white rounded-[24px] border border-[#E0E0D9] overflow-hidden p-4">
+              <table className="w-full text-left text-xs">
+                  <thead><tr><th className="p-2">名稱/日期</th><th className="p-2">詳情</th><th className="p-2 text-right">操作</th></tr></thead>
+                  <tbody>
+                      {(tab === 'members' ? safeMembers : safeLogs).map(i => (
+                          <tr key={i.id} className="border-t">
+                              <td className="p-2 font-bold">{tab === 'members' ? i.nickname : i.date}</td>
+                              <td className="p-2 text-slate-500">{tab === 'members' ? i.instrument : i.location}</td>
+                              <td className="p-2 text-right"><button onClick={() => handleDelete(tab === 'members' ? 'members' : 'logs', i.id)} className="text-[#BC8F8F]"><Trash2 size={14}/></button></td>
+                          </tr>
+                      ))}
+                  </tbody>
+              </table>
+          </div>
+      )}
+    </div>
+  );
+};
+
+export default App;
