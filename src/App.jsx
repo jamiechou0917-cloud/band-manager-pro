@@ -496,11 +496,19 @@ const DashboardView = ({ members = [], generalData = {}, alcoholCount = 0, db, r
     .map(p => ({...p, dateObj: new Date(p.date), endObj: p.endTime ? new Date(p.endTime) : new Date(new Date(p.date).getTime() + 2*60*60*1000) }))
     .sort((a,b) => a.dateObj - b.dateObj);
   
-  const nextPractice = sortedPractices.find(p => p.dateObj >= now) || sortedPractices[sortedPractices.length - 1] || { date: new Date().toISOString(), title: '尚未安排', location: '圓頭音樂' };
+  // 改用 endObj (結束時間) 來判斷，確保練團正在進行中時不會提早切換成下一場
+  const nextPractice = sortedPractices.find(p => p.endObj >= now) || sortedPractices[sortedPractices.length - 1] || { date: new Date().toISOString(), title: '尚未安排', location: '圓頭音樂' };
   
   const nextDateObj = new Date(nextPractice.date);
   const isValidDate = !isNaN(nextDateObj.getTime());
-  const diffDays = isValidDate ? Math.ceil((nextDateObj - now) / (1000 * 60 * 60 * 24)) : 0; 
+  
+  // 修正倒數計時：抹去時間，純粹比較「日曆天」，解決負數進位變成 -0 的 Bug
+  let diffDays = 0;
+  if (isValidDate) {
+      const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const practiceMidnight = new Date(nextDateObj.getFullYear(), nextDateObj.getMonth(), nextDateObj.getDate());
+      diffDays = Math.round((practiceMidnight - todayMidnight) / (1000 * 60 * 60 * 24));
+  }
 
   const handleUpdatePractices = async () => { 
       if (!db) return; 
