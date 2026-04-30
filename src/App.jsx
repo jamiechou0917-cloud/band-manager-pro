@@ -495,24 +495,6 @@ const DashboardView = ({ members = [], generalData = {}, alcoholCount = 0, db, r
     .filter(p => p && p.date) 
     .map(p => ({...p, dateObj: new Date(p.date), endObj: p.endTime ? new Date(p.endTime) : new Date(new Date(p.date).getTime() + 2*60*60*1000) }))
     .sort((a,b) => a.dateObj - b.dateObj);
-
-  // === ✅ 修改 1：練團日誌群組化邏輯 ===
-  const groupedLogs = useMemo(() => {
-    return sortedPractices.reduce((acc, p) => {
-      const month = p.date.substring(0, 7); // 擷取 "YYYY-MM"
-      if (!acc[month]) acc[month] = [];
-      acc[month].push(p);
-      return acc;
-    }, {});
-  }, [sortedPractices]);
-
-  // 取得最新月份，設定為預設展開狀態
-  const latestMonth = Object.keys(groupedLogs).sort().reverse()[0] || '';
-  const [openMonths, setOpenMonths] = useState({ [latestMonth]: true });
-
-  const toggleMonth = (month) => {
-    setOpenMonths(prev => ({ ...prev, [month]: !prev[month] }));
-  };
   
   const nextPractice = sortedPractices.find(p => p.dateObj >= now) || sortedPractices[sortedPractices.length - 1] || { date: new Date().toISOString(), title: '尚未安排', location: '圓頭音樂' };
   
@@ -682,45 +664,24 @@ const DashboardView = ({ members = [], generalData = {}, alcoholCount = 0, db, r
         <PartyPopper className="absolute -right-4 -bottom-4 text-white opacity-10 rotate-12" size={140} />
       </div>
         
-      {/* ✅ 修改 1 實裝：練團日誌列表改為手風琴折疊設計 */}
       <div className="bg-white p-4 rounded-2xl border border-[#E0E0D9]">
-         <div className="font-bold text-[#725E77] mb-4 flex items-center gap-2 px-1"><Calendar size={18}/> 場次列表</div>
-         <div className="space-y-3">
-            {Object.entries(groupedLogs)
-              .sort(([a], [b]) => b.localeCompare(a))
-              .map(([month, monthLogs]) => (
-                <div key={month} className="space-y-2">
-                  <button 
-                    onClick={() => toggleMonth(month)}
-                    className="w-full flex justify-between items-center py-2 px-3 bg-[#F0F5F9] rounded-xl text-[#8BA6B9] font-bold tracking-widest transition hover:bg-[#E2EDF3]"
-                  >
-                    <span>{month.replace('-', ' 年 ')} 月份</span>
-                    {openMonths[month] ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                  </button>
-                  {openMonths[month] && (
-                    <div className="space-y-2 pt-1 pb-2">
-                      {monthLogs.map(p => (
-                        <div key={p.date} className="flex justify-between items-start text-sm p-3 bg-slate-50 rounded-xl border border-slate-100 transition hover:shadow-sm">
-                           <div className="flex-1">
-                               <div className="font-bold text-[#6D6176] text-base mb-0.5 tracking-wide">{new Date(p.date).toLocaleDateString()} {p.title}</div>
-                               <div className="text-xs text-[#A29A8C] font-bold mb-1">
-                                  {new Date(p.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} - {p.endTime ? new Date(p.endTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '??'} @ {p.location}
-                               </div>
-                               {p.memo && <div className="text-[10px] text-[#77ABC0] bg-[#77ABC0]/10 px-2 py-1 rounded w-fit mt-1 flex items-center gap-1"><StickyNote size={10}/> {p.memo}</div>}
-                           </div>
-                           <a href={generateCalendarUrl(p)} target="_blank" className="p-2 text-[#C5B8BF] hover:text-[#77ABC0] hover:bg-[#77ABC0]/10 rounded-lg transition shrink-0 ml-2" title="加入行事曆">
-                              <CalendarPlus size={18}/>
-                           </a>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
+         <div className="font-bold text-[#725E77] mb-2 flex items-center gap-2"><Calendar size={18}/> 本月場次列表</div>
+         <div className="space-y-2">
+            {sortedPractices.map(p => (
+               <div key={p.date} className="flex justify-between items-start text-sm p-3 bg-slate-50 rounded-xl border border-slate-100">
+                  <div className="flex-1">
+                      <div className="font-bold text-slate-700 text-base mb-0.5">{new Date(p.date).toLocaleDateString()} {p.title}</div>
+                      <div className="text-xs text-slate-400 font-bold mb-1">{new Date(p.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} - {p.endTime ? new Date(p.endTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '??'} @ {p.location}</div>
+                      {p.memo && <div className="text-xs text-[#77ABC0] bg-[#77ABC0]/10 px-2 py-1 rounded w-fit mt-1 flex items-center gap-1"><StickyNote size={10}/> {p.memo}</div>}
+                  </div>
+                  <a href={generateCalendarUrl(p)} target="_blank" className="p-2 text-[#C5B8BF] hover:text-[#77ABC0] hover:bg-[#77ABC0]/10 rounded-lg transition" title="加入行事曆">
+                     <CalendarPlus size={18}/>
+                  </a>
+               </div>
             ))}
-            {Object.keys(groupedLogs).length === 0 && <div className="text-xs text-slate-400 text-center py-2">尚無場次安排</div>}
+            {sortedPractices.length === 0 && <div className="text-xs text-slate-400 text-center py-2">本月尚無安排</div>}
          </div>
       </div>
-
       <div>
         <div className="flex items-center justify-between px-1 mb-2"><h3 className="font-bold text-xl text-[#725E77]">本月練團點名</h3>{role.admin && <button onClick={() => setEditingMember({})} className="text-xs font-bold text-[#77ABC0] bg-[#F0F4F5] px-3 py-1.5 rounded-lg flex items-center gap-1"><Plus size={14}/> 新增團員</button>}</div>
         <div className="grid grid-cols-1 gap-3">
@@ -806,6 +767,24 @@ const SessionLogManager = ({ sessions = [], practices = [], members = [], settin
   const [showManualCreate, setShowManualCreate] = useState(false);
   const [manualDate, setManualDate] = useState(new Date().toISOString().split('T')[0]);
 
+  // ✅ 功能一：練團日誌群組化與手風琴狀態
+  const groupedLogs = useMemo(() => {
+    return safeSessions.reduce((acc, s) => {
+      if (!s.date) return acc;
+      const month = s.date.substring(0, 7); // "YYYY-MM"
+      if (!acc[month]) acc[month] = [];
+      acc[month].push(s);
+      return acc;
+    }, {});
+  }, [safeSessions]);
+
+  const latestMonth = Object.keys(groupedLogs).sort().reverse()[0] || '';
+  const [openMonths, setOpenMonths] = useState({ [latestMonth]: true });
+
+  const toggleMonth = (month) => {
+    setOpenMonths(prev => ({ ...prev, [month]: !prev[month] }));
+  };
+
   const handleCreate = async (dateStr, location = '圓頭音樂', preFilledAttendance = []) => {
     if (!db) return;
     
@@ -871,18 +850,40 @@ const SessionLogManager = ({ sessions = [], practices = [], members = [], settin
         </div>
       )}
 
-      {safeSessions.map(s => (
-        <div key={s.id} onClick={() => setActiveSessionId(s.id)} className="bg-white p-5 rounded-[28px] shadow-sm border border-[#E0E0D9] cursor-pointer hover:border-[#77ABC0]/50 transition relative group">
-          <div className="flex justify-between items-start mb-2">
-            <div><span className="bg-[#A8D8E2]/20 text-[#6E7F9B] text-[10px] font-bold px-2 py-0.5 rounded border border-[#A8D8E2]/30">{s.date}</span><h3 className="font-bold text-xl mt-1 text-[#725E77]">{s.tracks?.length || 0} 首歌</h3></div>
-            <div className="flex items-center gap-2">
-                {role.admin && <button onClick={(e) => handleDeleteSession(e, s.id)} className="p-1 text-[#BC8F8F] opacity-0 group-hover:opacity-100 hover:text-red-600 transition"><Trash2 size={16}/></button>}
-                <div className="bg-[#FDFBF7] p-2 rounded-full text-[#C5B8BF] group-hover:bg-[#E5C3D3]/20 group-hover:text-[#CBABCA] transition"><ChevronDown className="-rotate-90" size={20}/></div>
+      {/* ✅ 實裝：練團日誌手風琴列表 */}
+      <div className="space-y-4">
+        {Object.entries(groupedLogs)
+          .sort(([a], [b]) => b.localeCompare(a))
+          .map(([month, monthLogs]) => (
+            <div key={month} className="space-y-3">
+               <button
+                 onClick={() => toggleMonth(month)}
+                 className="w-full flex justify-between items-center py-2 px-1 text-[#8BA6B9] font-bold tracking-widest transition hover:text-[#6D8A96]"
+               >
+                 <span>{month.replace('-', ' 年 ')} 月份</span>
+                 {openMonths[month] ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+               </button>
+
+               {openMonths[month] && (
+                 <div className="space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
+                   {monthLogs.map(s => (
+                     <div key={s.id} onClick={() => setActiveSessionId(s.id)} className="bg-white p-5 rounded-[28px] shadow-sm border border-[#E0E0D9] cursor-pointer hover:border-[#77ABC0]/50 transition relative group">
+                        <div className="flex justify-between items-start mb-2">
+                          <div><span className="bg-[#A8D8E2]/20 text-[#6E7F9B] text-[10px] font-bold px-2 py-0.5 rounded border border-[#A8D8E2]/30">{s.date}</span><h3 className="font-bold text-xl mt-1 text-[#725E77]">{s.tracks?.length || 0} 首歌</h3></div>
+                          <div className="flex items-center gap-2">
+                              {role.admin && <button onClick={(e) => handleDeleteSession(e, s.id)} className="p-1 text-[#BC8F8F] opacity-0 group-hover:opacity-100 hover:text-red-600 transition"><Trash2 size={16}/></button>}
+                              <div className="bg-[#FDFBF7] p-2 rounded-full text-[#C5B8BF] group-hover:bg-[#E5C3D3]/20 group-hover:text-[#CBABCA] transition"><ChevronDown className="-rotate-90" size={20}/></div>
+                          </div>
+                        </div>
+                        <div className="text-[10px] text-[#C5B8BF] mt-1 flex items-center gap-1"><MapPin size={10}/> {s.location}</div>
+                     </div>
+                   ))}
+                 </div>
+               )}
             </div>
-          </div>
-          <div className="text-[10px] text-[#C5B8BF] mt-1 flex items-center gap-1"><MapPin size={10}/> {s.location}</div>
-        </div>
-      ))}
+        ))}
+        {safeSessions.length === 0 && <div className="text-center text-[#C5B8BF] text-sm py-8">尚無過往日誌</div>}
+      </div>
     </div>
   );
 };
@@ -1209,9 +1210,9 @@ const PracticeFeeCalculator = ({ session, members = [], settings = {}, role = {}
 };
 
 const MiscFeeCalculator = ({ session, members = [], db }) => {
-  const [items, setItems] = useState(session.miscExpenses || []); 
-  const [newItem, setNewItem] = useState({ item: '', amount: '', payerId: '', splitters: [] });
-  const [showDetails, setShowDetails] = useState(false); 
+  const [items, useState] = React.useState(session.miscExpenses || []); 
+  const [newItem, setNewItem] = React.useState({ item: '', amount: '', payerId: '', splitters: [] });
+  const [showDetails, setShowDetails] = React.useState(false); 
   
   const safeMembers = Array.isArray(members) ? members : [];
 
@@ -1377,7 +1378,7 @@ const AlcoholFeeCalculator = ({ members = [], settings = {} }) => {
   );
 };
 
-// 🛡️ 修正：酒櫃改為三個頁籤 (庫存、歷史、計算機)
+// 🛡️ ✅ 功能二：酒櫃改為三個頁籤 (庫存、歷史、計算機)
 const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role = {}, user }) => {
   const [tab, setTab] = useState('list'); 
   const [showAdd, setShowAdd] = useState(false);
@@ -1608,7 +1609,7 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
 
   return (
     <div className="space-y-4 animate-in slide-in-from-right-8">
-      {/* 🟢 修改：改為三個頁籤 */}
+      {/* 三個頁籤切換 */}
       <div className="flex bg-[#E0E0D9] p-1 rounded-xl mb-4">
           <button onClick={() => setTab('list')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1 ${tab === 'list' ? 'bg-white shadow text-[#77ABC0]' : 'text-[#C5B8BF]'}`}><Wine size={14}/> 庫存中</button>
           <button onClick={() => setTab('history')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1 ${tab === 'history' ? 'bg-white shadow text-[#77ABC0]' : 'text-[#C5B8BF]'}`}><Archive size={14}/> 歷史評價</button>
@@ -1617,7 +1618,6 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
 
       {tab === 'list' && (
         <div className="space-y-4">
-          {/* 操作按鈕區 */}
           {role.alcohol && !isInventoryMode && (
               <div className="flex gap-2">
                   <button onClick={() => { setShowAdd(!showAdd); setBatchDate(today); setBatchItems([{ name: '', type: '啤酒', level: 100, rating: 5, note: '' }]); }} className="flex-1 py-3 bg-white text-[#77ABC0] font-bold text-xs flex items-center justify-center gap-1 border border-[#77ABC0] rounded-2xl hover:bg-[#F0F4F5] transition"><Plus size={14}/> 批次進貨</button>
@@ -1625,7 +1625,6 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
               </div>
           )}
 
-          {/* 批次新增表單 */}
           {showAdd && !isInventoryMode && (
               <div className="bg-white p-5 rounded-[28px] border-2 border-[#77ABC0] shadow-lg space-y-4 animate-in fade-in slide-in-from-top-4">
                   <div className="flex justify-between items-center">
@@ -1658,7 +1657,6 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
               </div>
           )}
 
-          {/* 盤點模式介面 */}
           {isInventoryMode && (
               <div className="bg-[#FFF9DB] p-5 rounded-[28px] border-2 border-[#D6C592] shadow-lg animate-in fade-in">
                   <div className="flex justify-between items-center mb-4">
@@ -1701,10 +1699,8 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
               </div>
           )}
 
-          {/* 正常顯示模式 (分區顯示) */}
           {!isInventoryMode && (
               <div className="space-y-6">
-                  {/* 今日/未盤點批次 */}
                   {sortedDates.map(date => (
                       <div key={date} className="space-y-3">
                           <div className="flex items-center gap-2 pl-2">
@@ -1717,7 +1713,6 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
                       </div>
                   ))}
 
-                  {/* 庫存區 (Archived) */}
                   {archivedAlcohols.length > 0 && (
                       <div className="space-y-3 pt-4 border-t-2 border-dashed border-[#E0E0D9]">
                           <div className="flex items-center gap-2 pl-2">
@@ -1741,7 +1736,7 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
         </div>
       )}
 
-      {/* 🟢 新增：歷史評價獨立頁籤 */}
+      {/* 獨立歷史評價頁籤 */}
       {tab === 'history' && (
          <div className="space-y-4 animate-in fade-in">
              <div className="flex justify-between items-center px-2 mb-2">
