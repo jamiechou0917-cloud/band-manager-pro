@@ -495,6 +495,24 @@ const DashboardView = ({ members = [], generalData = {}, alcoholCount = 0, db, r
     .filter(p => p && p.date) 
     .map(p => ({...p, dateObj: new Date(p.date), endObj: p.endTime ? new Date(p.endTime) : new Date(new Date(p.date).getTime() + 2*60*60*1000) }))
     .sort((a,b) => a.dateObj - b.dateObj);
+
+  // === ✅ 修改 1：練團日誌群組化邏輯 ===
+  const groupedLogs = useMemo(() => {
+    return sortedPractices.reduce((acc, p) => {
+      const month = p.date.substring(0, 7); // 擷取 "YYYY-MM"
+      if (!acc[month]) acc[month] = [];
+      acc[month].push(p);
+      return acc;
+    }, {});
+  }, [sortedPractices]);
+
+  // 取得最新月份，設定為預設展開狀態
+  const latestMonth = Object.keys(groupedLogs).sort().reverse()[0] || '';
+  const [openMonths, setOpenMonths] = useState({ [latestMonth]: true });
+
+  const toggleMonth = (month) => {
+    setOpenMonths(prev => ({ ...prev, [month]: !prev[month] }));
+  };
   
   const nextPractice = sortedPractices.find(p => p.dateObj >= now) || sortedPractices[sortedPractices.length - 1] || { date: new Date().toISOString(), title: '尚未安排', location: '圓頭音樂' };
   
@@ -663,25 +681,46 @@ const DashboardView = ({ members = [], generalData = {}, alcoholCount = 0, db, r
         </div>
         <PartyPopper className="absolute -right-4 -bottom-4 text-white opacity-10 rotate-12" size={140} />
       </div>
-       
+        
+      {/* ✅ 修改 1 實裝：練團日誌列表改為手風琴折疊設計 */}
       <div className="bg-white p-4 rounded-2xl border border-[#E0E0D9]">
-         <div className="font-bold text-[#725E77] mb-2 flex items-center gap-2"><Calendar size={18}/> 本月場次列表</div>
-         <div className="space-y-2">
-            {sortedPractices.map(p => (
-               <div key={p.date} className="flex justify-between items-start text-sm p-3 bg-slate-50 rounded-xl border border-slate-100">
-                  <div className="flex-1">
-                      <div className="font-bold text-slate-700 text-base mb-0.5">{new Date(p.date).toLocaleDateString()} {p.title}</div>
-                      <div className="text-xs text-slate-400 font-bold mb-1">{new Date(p.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} - {p.endTime ? new Date(p.endTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '??'} @ {p.location}</div>
-                      {p.memo && <div className="text-xs text-[#77ABC0] bg-[#77ABC0]/10 px-2 py-1 rounded w-fit mt-1 flex items-center gap-1"><StickyNote size={10}/> {p.memo}</div>}
-                  </div>
-                  <a href={generateCalendarUrl(p)} target="_blank" className="p-2 text-[#C5B8BF] hover:text-[#77ABC0] hover:bg-[#77ABC0]/10 rounded-lg transition" title="加入行事曆">
-                     <CalendarPlus size={18}/>
-                  </a>
-               </div>
+         <div className="font-bold text-[#725E77] mb-4 flex items-center gap-2 px-1"><Calendar size={18}/> 場次列表</div>
+         <div className="space-y-3">
+            {Object.entries(groupedLogs)
+              .sort(([a], [b]) => b.localeCompare(a))
+              .map(([month, monthLogs]) => (
+                <div key={month} className="space-y-2">
+                  <button 
+                    onClick={() => toggleMonth(month)}
+                    className="w-full flex justify-between items-center py-2 px-3 bg-[#F0F5F9] rounded-xl text-[#8BA6B9] font-bold tracking-widest transition hover:bg-[#E2EDF3]"
+                  >
+                    <span>{month.replace('-', ' 年 ')} 月份</span>
+                    {openMonths[month] ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                  </button>
+                  {openMonths[month] && (
+                    <div className="space-y-2 pt-1 pb-2">
+                      {monthLogs.map(p => (
+                        <div key={p.date} className="flex justify-between items-start text-sm p-3 bg-slate-50 rounded-xl border border-slate-100 transition hover:shadow-sm">
+                           <div className="flex-1">
+                               <div className="font-bold text-[#6D6176] text-base mb-0.5 tracking-wide">{new Date(p.date).toLocaleDateString()} {p.title}</div>
+                               <div className="text-xs text-[#A29A8C] font-bold mb-1">
+                                  {new Date(p.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} - {p.endTime ? new Date(p.endTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '??'} @ {p.location}
+                               </div>
+                               {p.memo && <div className="text-[10px] text-[#77ABC0] bg-[#77ABC0]/10 px-2 py-1 rounded w-fit mt-1 flex items-center gap-1"><StickyNote size={10}/> {p.memo}</div>}
+                           </div>
+                           <a href={generateCalendarUrl(p)} target="_blank" className="p-2 text-[#C5B8BF] hover:text-[#77ABC0] hover:bg-[#77ABC0]/10 rounded-lg transition shrink-0 ml-2" title="加入行事曆">
+                              <CalendarPlus size={18}/>
+                           </a>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
             ))}
-            {sortedPractices.length === 0 && <div className="text-xs text-slate-400 text-center py-2">本月尚無安排</div>}
+            {Object.keys(groupedLogs).length === 0 && <div className="text-xs text-slate-400 text-center py-2">尚無場次安排</div>}
          </div>
       </div>
+
       <div>
         <div className="flex items-center justify-between px-1 mb-2"><h3 className="font-bold text-xl text-[#725E77]">本月練團點名</h3>{role.admin && <button onClick={() => setEditingMember({})} className="text-xs font-bold text-[#77ABC0] bg-[#F0F4F5] px-3 py-1.5 rounded-lg flex items-center gap-1"><Plus size={14}/> 新增團員</button>}</div>
         <div className="grid grid-cols-1 gap-3">
@@ -1338,13 +1377,12 @@ const AlcoholFeeCalculator = ({ members = [], settings = {} }) => {
   );
 };
 
-// 🛡️ v6.4 修正：酒櫃升級 3.0，導入「歷史酒單 (軟刪除)」機制
+// 🛡️ 修正：酒櫃改為三個頁籤 (庫存、歷史、計算機)
 const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role = {}, user }) => {
   const [tab, setTab] = useState('list'); 
   const [showAdd, setShowAdd] = useState(false);
   const [editingComment, setEditingComment] = useState({ alcoholId: null, index: null, text: '' });
   const [newCommentMap, setNewCommentMap] = useState({});
-  const [showHistory, setShowHistory] = useState(false); // 控制是否展開歷史酒單
 
   const today = new Date().toISOString().split('T')[0];
   const [batchDate, setBatchDate] = useState(today);
@@ -1357,14 +1395,9 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
   const alcoholOptions = Array.isArray(settings?.alcoholTypes) ? settings.alcoholTypes : ['紅酒', '白酒', '清酒', '氣泡酒', '啤酒', '威士忌', '其他'];
   const safeAlcohols = Array.isArray(alcohols) ? alcohols : [];
 
-  // --- v6.4 資料分群邏輯 (加入 isEmptied 判斷) ---
-  // 1. 歷史酒單：已清空的酒
+  // --- 資料分群邏輯 ---
   const historyAlcohols = safeAlcohols.filter(a => a.isEmptied === true);
-  
-  // 2. 活躍酒單：還沒喝完的酒
   const activeAlcohols = safeAlcohols.filter(a => a.isEmptied !== true);
-  
-  // 活躍酒單中，再區分「新進批次」與「已盤點庫存」
   const archivedAlcohols = activeAlcohols.filter(a => a.date === 'archived');
   const currentBatchAlcohols = activeAlcohols.filter(a => a.date !== 'archived');
 
@@ -1412,7 +1445,7 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
                   level: parseInt(item.level),
                   note: item.note,
                   date: batchDate, 
-                  isEmptied: false, // 預設未清空
+                  isEmptied: false, 
                   comments: [],
                   createdAt: serverTimestamp()
               });
@@ -1431,7 +1464,6 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
 
   const startInventory = () => {
       const initialState = {};
-      // 只盤點未喝完的酒
       activeAlcohols.forEach(a => {
           initialState[a.id] = { level: a.level, toEmpty: false };
       });
@@ -1454,7 +1486,6 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
               const state = inventoryState[id];
               const docRef = getDocRef(db, 'alcohol', id);
               
-              // v6.4 修正：不再 deleteDoc，而是標記為 isEmptied: true
               if (state.toEmpty || state.level <= 0) {
                   batch.update(docRef, { 
                       isEmptied: true, 
@@ -1479,7 +1510,6 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
       }
   };
 
-  // 真正的物理刪除 (僅限管理員在歷史區使用)
   const handleHardDelete = async (id) => { if (!db || !confirm("⚠️ 確定要永久刪除此酒品與所有留言？此操作無法復原。")) return; await deleteDoc(getDocRef(db, 'alcohol', id)); };
   
   const handleAddComment = async (id) => { 
@@ -1530,7 +1560,6 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
                 </div>
                 <p className={`text-xs font-bold mb-1 ${a.isEmptied ? 'text-slate-400' : 'text-[#8B8C89]'}`}>{a.type}</p>
                 
-                {/* 歷史酒單不顯示剩餘量拉桿 */}
                 {!a.isEmptied && (
                     <div className="w-full h-1.5 bg-[#F0F4F5] rounded-full overflow-hidden mb-2">
                         <div className="h-full bg-[#D6C592]" style={{width: `${a.level}%`}}></div>
@@ -1539,11 +1568,9 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
                 <div className={`text-xs ${a.isEmptied ? 'text-slate-400' : 'text-[#6E7F9B]'}`}>{a.note}</div>
             </div>
             
-            {/* 只有管理員可以在歷史酒單中真正刪除資料 */}
             {role.admin && a.isEmptied && (
                 <button onClick={() => handleHardDelete(a.id)} className="text-red-300 hover:text-red-500 transition"><Trash2 size={16}/></button>
             )}
-            {/* 未清空的酒，仍提供一般刪除按鈕 (方便輸入錯誤時刪除) */}
             {role.alcohol && !a.isEmptied && (
                 <button onClick={() => handleHardDelete(a.id)} className="text-[#BC8F8F] opacity-0 group-hover:opacity-100 transition"><Trash2 size={16}/></button>
             )}
@@ -1581,12 +1608,14 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
 
   return (
     <div className="space-y-4 animate-in slide-in-from-right-8">
-      <div className="flex bg-[#E0E0D9] p-1 rounded-xl mb-2">
-          <button onClick={() => setTab('list')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition ${tab === 'list' ? 'bg-white shadow text-[#77ABC0]' : 'text-[#C5B8BF]'}`}>酒櫃庫存</button>
-          <button onClick={() => setTab('calculator')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition ${tab === 'calculator' ? 'bg-white shadow text-[#77ABC0]' : 'text-[#C5B8BF]'}`}>補貨計算</button>
+      {/* 🟢 修改：改為三個頁籤 */}
+      <div className="flex bg-[#E0E0D9] p-1 rounded-xl mb-4">
+          <button onClick={() => setTab('list')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1 ${tab === 'list' ? 'bg-white shadow text-[#77ABC0]' : 'text-[#C5B8BF]'}`}><Wine size={14}/> 庫存中</button>
+          <button onClick={() => setTab('history')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1 ${tab === 'history' ? 'bg-white shadow text-[#77ABC0]' : 'text-[#C5B8BF]'}`}><Archive size={14}/> 歷史評價</button>
+          <button onClick={() => setTab('calculator')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1 ${tab === 'calculator' ? 'bg-white shadow text-[#77ABC0]' : 'text-[#C5B8BF]'}`}><Calculator size={14}/> 補貨計算</button>
       </div>
 
-      {tab === 'list' ? (
+      {tab === 'list' && (
         <div className="space-y-4">
           {/* 操作按鈕區 */}
           {role.alcohol && !isInventoryMode && (
@@ -1701,27 +1730,7 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
                       </div>
                   )}
 
-                  {/* 歷史酒單區 (已喝光) */}
-                  {historyAlcohols.length > 0 && (
-                      <div className="space-y-3 pt-4 border-t-2 border-dashed border-slate-200">
-                          <button onClick={() => setShowHistory(!showHistory)} className="w-full flex items-center justify-between p-2 hover:bg-slate-100 rounded-xl transition">
-                              <div className="flex items-center gap-2">
-                                  <BookMarked size={16} className="text-slate-400"/>
-                                  <h3 className="font-bold text-sm text-slate-500 tracking-wider">📖 歷史酒單 (已喝光)</h3>
-                                  <span className="text-xs bg-slate-200 text-slate-500 px-2 py-0.5 rounded-full">{historyAlcohols.length}</span>
-                              </div>
-                              <ChevronDown size={16} className={`text-slate-400 transition-transform ${showHistory ? 'rotate-180' : ''}`} />
-                          </button>
-                          
-                          {showHistory && (
-                              <div className="grid gap-3 animate-in fade-in">
-                                  {historyAlcohols.map(renderAlcoholCard)}
-                              </div>
-                          )}
-                      </div>
-                  )}
-
-                  {safeAlcohols.length === 0 && !showAdd && (
+                  {activeAlcohols.length === 0 && !showAdd && (
                       <div className="text-center py-10 border-2 border-dashed border-[#E0E0D9] rounded-[28px] text-[#C5B8BF]">
                           <Wine size={40} className="mx-auto mb-2 opacity-50" />
                           <p className="text-sm font-bold">酒櫃目前空空如也</p>
@@ -1730,7 +1739,30 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
               </div>
           )}
         </div>
-      ) : <AlcoholFeeCalculator members={members} settings={settings} />}
+      )}
+
+      {/* 🟢 新增：歷史評價獨立頁籤 */}
+      {tab === 'history' && (
+         <div className="space-y-4 animate-in fade-in">
+             <div className="flex justify-between items-center px-2 mb-2">
+                <h3 className="font-bold text-[#8B8C89] tracking-wider flex items-center gap-2"><BookMarked size={18}/> 已喝光清單</h3>
+                <span className="text-xs bg-[#E0E0D9] text-[#725E77] px-3 py-1 rounded-full font-bold">共 {historyAlcohols.length} 支</span>
+             </div>
+             
+             {historyAlcohols.length > 0 ? (
+                 <div className="grid gap-4">
+                     {historyAlcohols.map(renderAlcoholCard)}
+                 </div>
+             ) : (
+                 <div className="text-center py-12 border-2 border-dashed border-[#E0E0D9] rounded-[28px] text-[#C5B8BF] bg-white/50">
+                     <Archive size={40} className="mx-auto mb-3 opacity-30" />
+                     <p className="text-sm font-bold">目前沒有歷史紀錄喔！</p>
+                 </div>
+             )}
+         </div>
+      )}
+
+      {tab === 'calculator' && <AlcoholFeeCalculator members={members} settings={settings} />}
     </div>
   );
 };
