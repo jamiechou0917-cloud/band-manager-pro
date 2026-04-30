@@ -493,8 +493,31 @@ const DashboardView = ({ members = [], generalData = {}, alcoholCount = 0, db, r
   const now = new Date();
   const sortedPractices = [...practices]
     .filter(p => p && p.date) 
-    .map(p => ({...p, dateObj: new Date(p.date), endObj: p.endTime ? new Date(p.endTime) : new Date(new Date(p.date).getTime() + 2*60*60*1000) }))
+    .map(p => ({
+        ...p, 
+        dateObj: new Date(p.date), 
+        // 確保結束時間有算入
+        endObj: p.endTime ? new Date(p.endTime) : new Date(new Date(p.date).getTime() + 2*60*60*1000) 
+    }))
     .sort((a,b) => a.dateObj - b.dateObj);
+
+  // === 練團日誌群組化邏輯 ===
+  const groupedLogs = useMemo(() => {
+    return sortedPractices.reduce((acc, p) => {
+      const month = p.date.substring(0, 7); // 擷取 "YYYY-MM"
+      if (!acc[month]) acc[month] = [];
+      acc[month].push(p);
+      return acc;
+    }, {});
+  }, [sortedPractices]);
+
+  // 取得最新月份，設定為預設展開狀態
+  const latestMonth = Object.keys(groupedLogs).sort().reverse()[0] || '';
+  const [openMonths, setOpenMonths] = useState({ [latestMonth]: true });
+
+  const toggleMonth = (month) => {
+    setOpenMonths(prev => ({ ...prev, [month]: !prev[month] }));
+  };
   
   // 改用 endObj (結束時間) 來判斷，確保練團正在進行中時不會提早切換成下一場
   const nextPractice = sortedPractices.find(p => p.endObj >= now) || sortedPractices[sortedPractices.length - 1] || { date: new Date().toISOString(), title: '尚未安排', location: '圓頭音樂' };
@@ -672,24 +695,45 @@ const DashboardView = ({ members = [], generalData = {}, alcoholCount = 0, db, r
         <PartyPopper className="absolute -right-4 -bottom-4 text-white opacity-10 rotate-12" size={140} />
       </div>
         
-      <div className="bg-white p-4 rounded-2xl border border-[#E0E0D9]">
-         <div className="font-bold text-[#725E77] mb-2 flex items-center gap-2"><Calendar size={18}/> 本月場次列表</div>
-         <div className="space-y-2">
-            {sortedPractices.map(p => (
-               <div key={p.date} className="flex justify-between items-start text-sm p-3 bg-slate-50 rounded-xl border border-slate-100">
-                  <div className="flex-1">
-                      <div className="font-bold text-slate-700 text-base mb-0.5">{new Date(p.date).toLocaleDateString()} {p.title}</div>
-                      <div className="text-xs text-slate-400 font-bold mb-1">{new Date(p.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} - {p.endTime ? new Date(p.endTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '??'} @ {p.location}</div>
-                      {p.memo && <div className="text-xs text-[#77ABC0] bg-[#77ABC0]/10 px-2 py-1 rounded w-fit mt-1 flex items-center gap-1"><StickyNote size={10}/> {p.memo}</div>}
-                  </div>
-                  <a href={generateCalendarUrl(p)} target="_blank" className="p-2 text-[#C5B8BF] hover:text-[#77ABC0] hover:bg-[#77ABC0]/10 rounded-lg transition" title="加入行事曆">
-                     <CalendarPlus size={18}/>
-                  </a>
-               </div>
+      {/* 🟢 修正：練團日誌改為手風琴折疊 */}
+      <div className="bg-white p-4 rounded-[2rem] border border-[#E0E0D9] shadow-sm">
+         <div className="font-bold text-[#725E77] mb-4 flex items-center gap-2 px-1"><Calendar size={18}/> 場次列表</div>
+         <div className="space-y-3">
+            {Object.entries(groupedLogs)
+              .sort(([a], [b]) => b.localeCompare(a)) // 年月反向排序 (最新在上)
+              .map(([month, monthLogs]) => (
+                <div key={month} className="space-y-2">
+                  <button 
+                    onClick={() => toggleMonth(month)}
+                    className="w-full flex justify-between items-center py-2 px-3 bg-[#F0F5F9] rounded-xl text-[#8BA6B9] font-bold tracking-widest transition hover:bg-[#E2EDF3]"
+                  >
+                    <span>{month.replace('-', ' 年 ')} 月份</span>
+                    {openMonths[month] ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                  </button>
+                  {openMonths[month] && (
+                    <div className="space-y-2 pt-1 pb-2">
+                      {monthLogs.map(p => (
+                        <div key={p.date} className="flex justify-between items-start text-sm p-3 bg-slate-50 rounded-xl border border-slate-100 transition hover:shadow-sm">
+                           <div className="flex-1">
+                               <div className="font-bold text-[#6D6176] text-base mb-0.5 tracking-wide">{new Date(p.date).toLocaleDateString()} {p.title}</div>
+                               <div className="text-xs text-[#A29A8C] font-bold mb-1">
+                                  {new Date(p.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} - {p.endTime ? new Date(p.endTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '??'} @ {p.location}
+                               </div>
+                               {p.memo && <div className="text-xs text-[#77ABC0] bg-[#77ABC0]/10 px-2 py-1 rounded w-fit mt-1 flex items-center gap-1"><StickyNote size={10}/> {p.memo}</div>}
+                           </div>
+                           <a href={generateCalendarUrl(p)} target="_blank" className="p-2 text-[#C5B8BF] hover:text-[#77ABC0] hover:bg-[#77ABC0]/10 rounded-lg transition shrink-0 ml-2" title="加入行事曆">
+                              <CalendarPlus size={18}/>
+                           </a>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
             ))}
-            {sortedPractices.length === 0 && <div className="text-xs text-slate-400 text-center py-2">本月尚無安排</div>}
+            {Object.keys(groupedLogs).length === 0 && <div className="text-xs text-slate-400 text-center py-2">尚無場次安排</div>}
          </div>
       </div>
+
       <div>
         <div className="flex items-center justify-between px-1 mb-2"><h3 className="font-bold text-xl text-[#725E77]">本月練團點名</h3>{role.admin && <button onClick={() => setEditingMember({})} className="text-xs font-bold text-[#77ABC0] bg-[#F0F4F5] px-3 py-1.5 rounded-lg flex items-center gap-1"><Plus size={14}/> 新增團員</button>}</div>
         <div className="grid grid-cols-1 gap-3">
@@ -1386,7 +1430,7 @@ const AlcoholFeeCalculator = ({ members = [], settings = {} }) => {
   );
 };
 
-// 🛡️ ✅ 功能二：酒櫃改為三個頁籤 (庫存、歷史、計算機)
+// 🛡️ 修正：酒櫃改為三個頁籤 (庫存、歷史、計算機)
 const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role = {}, user }) => {
   const [tab, setTab] = useState('list'); 
   const [showAdd, setShowAdd] = useState(false);
