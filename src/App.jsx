@@ -29,6 +29,37 @@ import {
 } from 'lucide-react';
 
 // ==========================================
+// 📱 PWA iOS 安裝引導元件
+// ==========================================
+const PwaInstallPrompt = () => {
+  const [showPrompt, setShowPrompt] = useState(false);
+
+  useEffect(() => {
+    // 偵測是否為 iOS 設備且尚未安裝 (未處於 standalone 模式)
+    const isIos = /iphone|ipad|ipod/.test(window.navigator.userAgent.toLowerCase());
+    const isStandalone = window.navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches;
+    
+    if (isIos && !isStandalone) {
+      setShowPrompt(true);
+    }
+  }, []);
+
+  if (!showPrompt) return null;
+
+  return (
+    <div className="fixed bottom-24 left-4 right-4 bg-white p-4 rounded-[24px] shadow-xl border border-[#E0E0D9] z-[100] flex items-center gap-4 animate-in slide-in-from-bottom-5">
+      <div className="flex-1">
+        <p className="text-sm font-bold text-[#725E77] mb-1">將樂團管家加入主畫面</p>
+        <p className="text-[11px] text-[#C5B8BF]">點擊下方 <Share size={12} className="inline mx-0.5 text-[#77ABC0]"/> 圖示，選擇「加入主畫面」，以後就不用一直重登囉！</p>
+      </div>
+      <button onClick={() => setShowPrompt(false)} className="p-2 bg-[#F0F4F5] text-[#C5B8BF] rounded-full hover:bg-slate-200">
+        <X size={16} />
+      </button>
+    </div>
+  );
+};
+
+// ==========================================
 // 🛡️ 錯誤邊界元件
 // ==========================================
 class ErrorBoundary extends React.Component {
