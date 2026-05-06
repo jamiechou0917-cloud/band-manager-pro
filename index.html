@@ -2,8 +2,18 @@
 <html lang="zh-TW">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>樂團管家 Pro</title>
+    
+    <!-- 加入 PWA Manifest -->
+    <link rel="manifest" href="/manifest.json" />
+    
+    <!-- iOS Safari 專屬設定 -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="樂團管家" />
+    <link rel="apple-touch-icon" href="/icon-192x192.png" />
+
     <!-- 引入 Tailwind CSS 讓莫蘭迪配色生效 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -12,6 +22,8 @@
       ::-webkit-scrollbar { width: 4px; }
       ::-webkit-scrollbar-track { background: transparent; }
       ::-webkit-scrollbar-thumb { background: #CBABCA; border-radius: 10px; }
+      /* PWA 底部安全距離 */
+      .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
     </style>
   </head>
   <body>
