@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
-// v6.4 核心修正：酒櫃升級 3.0，導入「歷史酒單 (軟刪除)」機制，喝光的酒會被封存並保留留言心得
+// v6.5 核心修正：酒櫃升級 3.0，導入「歷史酒單 (軟刪除)」機制，喝光的酒會被封存並保留留言心得
 import { 
   getAuth, 
   signInWithPopup, 
@@ -194,7 +194,7 @@ const USER_CONFIG = {
 let firebaseConfig;
 const IS_CANVAS = typeof __firebase_config !== 'undefined';
 try { firebaseConfig = IS_CANVAS ? JSON.parse(__firebase_config) : USER_CONFIG; } catch (e) { firebaseConfig = USER_CONFIG; }
-const storageAppId = IS_CANVAS ? (typeof __app_id !== 'undefined' ? __app_id : 'band-manager-preview') : null;
+const storageAppId = IS_CANVAS ? (typeof __app_id !== 'undefined' ? __app_id.replace(/\//g, '-') : 'band-manager-preview') : null;
 
 const getCollectionRef = (db, name) => IS_CANVAS && storageAppId ? collection(db, 'artifacts', storageAppId, 'public', 'data', name) : collection(db, name);
 const getDocRef = (db, name, id) => IS_CANVAS && storageAppId ? doc(db, 'artifacts', storageAppId, 'public', 'data', name, id) : doc(db, name, id);
@@ -239,8 +239,6 @@ const App = () => {
   const [songs, setSongs] = useState([]);
   const [repertoire, setRepertoire] = useState([]);
   const [generalData, setGeneralData] = useState(null);
-  
-  const appId = USER_CONFIG.appId; 
 
   // 偵測 In-App Browser
   useEffect(() => {
@@ -464,7 +462,7 @@ const App = () => {
           <div className="flex items-center gap-3">
             {showImage ? <img src={BAND_LOGO_BASE64} alt="Logo" className="w-9 h-9 rounded-xl object-contain bg-white shadow-sm" onError={() => setImgError(true)} /> : <BandLogo />}
             <span className="font-bold text-lg tracking-wide text-[#77ABC0]">{BAND_NAME}</span>
-            <span className="text-[9px] bg-[#E8F1E9] text-[#5F7A61] px-1.5 py-0.5 rounded-full font-bold ml-1">v6.4</span>
+            <span className="text-[9px] bg-[#E8F1E9] text-[#5F7A61] px-1.5 py-0.5 rounded-full font-bold ml-1">v6.6</span>
           </div>
           <div className="flex items-center gap-2">
             {role.admin && <span className="bg-rose-100 text-rose-600 text-[10px] px-2 py-0.5 rounded-full font-bold">Admin</span>}
@@ -487,6 +485,9 @@ const App = () => {
           <NavBtn id="alcohol" icon={Beer} label="酒櫃" active={activeTab} set={setActiveTab} />
           <NavBtn id="library" icon={Library} label="資料庫" active={activeTab} set={setActiveTab} />
         </nav>
+        
+        {/* PWA 安裝引導 */}
+        <PwaInstallPrompt />
 
         {showPrankModal && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
@@ -515,6 +516,9 @@ const DashboardView = ({ members = [], generalData = {}, alcoholCount = 0, db, r
   const [expandedMember, setExpandedMember] = useState(null);
   const [editingMember, setEditingMember] = useState(null); 
   
+  // 🌟 新增：練團日誌的雙頁籤狀態 (upcoming / history)
+  const [logTab, setLogTab] = useState('upcoming');
+  
   useEffect(() => {
     if (!editingPractice && generalData.practices) {
       setPractices(generalData.practices);
@@ -527,36 +531,37 @@ const DashboardView = ({ members = [], generalData = {}, alcoholCount = 0, db, r
     .map(p => ({
         ...p, 
         dateObj: new Date(p.date), 
-        // 確保結束時間有算入
         endObj: p.endTime ? new Date(p.endTime) : new Date(new Date(p.date).getTime() + 2*60*60*1000) 
     }))
     .sort((a,b) => a.dateObj - b.dateObj);
 
-  // === 練團日誌群組化邏輯 ===
-  const groupedLogs = useMemo(() => {
-    return sortedPractices.reduce((acc, p) => {
-      const month = p.date.substring(0, 7); // 擷取 "YYYY-MM"
+  // 🌟 將場次拆分為「即將到來」與「歷史日誌」
+  const upcomingPractices = sortedPractices.filter(p => p.endObj >= now);
+  // 歷史日誌反向排序 (最新在前)
+  const historyPractices = sortedPractices.filter(p => p.endObj < now).reverse();
+
+  // 歷史日誌群組化 (依月份)
+  const groupedHistoryLogs = useMemo(() => {
+    return historyPractices.reduce((acc, p) => {
+      const month = p.date.substring(0, 7); // "YYYY-MM"
       if (!acc[month]) acc[month] = [];
       acc[month].push(p);
       return acc;
     }, {});
-  }, [sortedPractices]);
+  }, [historyPractices]);
 
-  // 取得最新月份，設定為預設展開狀態
-  const latestMonth = Object.keys(groupedLogs).sort().reverse()[0] || '';
-  const [openMonths, setOpenMonths] = useState({ [latestMonth]: true });
+  // 取最新月份設定展開
+  const latestHistoryMonth = Object.keys(groupedHistoryLogs)[0] || '';
+  const [openMonths, setOpenMonths] = useState({ [latestHistoryMonth]: true });
 
   const toggleMonth = (month) => {
     setOpenMonths(prev => ({ ...prev, [month]: !prev[month] }));
   };
   
-  // 改用 endObj (結束時間) 來判斷，確保練團正在進行中時不會提早切換成下一場
-  const nextPractice = sortedPractices.find(p => p.endObj >= now) || sortedPractices[sortedPractices.length - 1] || { date: new Date().toISOString(), title: '尚未安排', location: '圓頭音樂' };
-  
+  const nextPractice = upcomingPractices[0] || { date: new Date().toISOString(), title: '尚未安排', location: '圓頭音樂' };
   const nextDateObj = new Date(nextPractice.date);
   const isValidDate = !isNaN(nextDateObj.getTime());
   
-  // 修正倒數計時：抹去時間，純粹比較「日曆天」，解決負數進位變成 -0 的 Bug
   let diffDays = 0;
   if (isValidDate) {
       const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -613,11 +618,63 @@ const DashboardView = ({ members = [], generalData = {}, alcoholCount = 0, db, r
     return `https://www.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(p.title)}&dates=${format(startDate)}/${format(endDate)}&location=${encodeURIComponent(p.location || '')}&details=${encodeURIComponent(details)}`;
   };
 
+  // 🌟 手機端產生 .ics 檔案的原生行事曆加入邏輯
+  const handleAddToCalendar = (e, p) => {
+    e.preventDefault();
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    
+    if (!isMobile) {
+      // 電腦版：維持跳轉到 Google 行事曆
+      window.open(generateCalendarUrl(p), '_blank');
+      return;
+    }
+
+    // 手機版：產生 .ics 供原生系統讀取
+    const startDate = new Date(p.date);
+    const endDate = p.endTime ? new Date(p.endTime) : new Date(startDate.getTime() + 2*60*60*1000);
+    
+    const formatICSDate = (date) => {
+        const pad = (n) => (n < 10 ? '0' + n : n);
+        return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}T${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+    };
+
+    const dtstart = formatICSDate(startDate);
+    const dtend = formatICSDate(endDate);
+    const summary = p.title || '練團';
+    const location = p.location || '圓頭音樂';
+    const description = `${p.targetSongs ? '🎵 預計曲目: ' + p.targetSongs : ''}${p.memo ? '\\n📝 備註: ' + p.memo : ''}`;
+
+    const icsContent = [
+        'BEGIN:VCALENDAR',
+        'VERSION:2.0',
+        'PRODID:-//Band Manager Pro//TW',
+        'CALSCALE:GREGORIAN',
+        'BEGIN:VEVENT',
+        `DTSTART;TZID=Asia/Taipei:${dtstart}`,
+        `DTEND;TZID=Asia/Taipei:${dtend}`,
+        `SUMMARY:${summary}`,
+        `LOCATION:${location}`,
+        `DESCRIPTION:${description.replace(/\n/g, '\\n')}`,
+        'END:VEVENT',
+        'END:VCALENDAR'
+    ].join('\n');
+
+    const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `${summary}.ics`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   const renderPracticeEditor = () => (
     <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
       <div className="bg-white p-6 rounded-3xl w-full max-w-sm space-y-4 max-h-[80vh] overflow-y-auto">
-        <h3 className="font-bold text-lg text-[#725E77]">設定本月練團時間</h3>
-        <p className="text-xs text-slate-400">請一次規劃好本月的場次，日誌會自動連動。</p>
+        <h3 className="font-bold text-lg text-[#725E77]">設定場次時間</h3>
+        <p className="text-xs text-slate-400">請規劃好未來的場次，日誌會自動連動。</p>
         {practices.map((p, idx) => {
           const dateStr = p.date ? p.date.split('T')[0] : '';
           const startTimeStr = p.date && p.date.includes('T') ? p.date.split('T')[1].substring(0, 5) : '20:00';
@@ -696,6 +753,7 @@ const DashboardView = ({ members = [], generalData = {}, alcoholCount = 0, db, r
       {editingPractice && renderPracticeEditor()}
       {editingMember && <MemberEditModal member={editingMember} onClose={() => setEditingMember(null)} onSave={handleSaveMember} />}
 
+      {/* 英雄區塊：下一場練團 */}
       <div className="bg-gradient-to-br from-[#77ABC0] to-[#6E7F9B] rounded-[32px] p-6 text-white shadow-lg shadow-[#77ABC0]/20 relative overflow-hidden group">
         <div className="relative z-10">
           <div className="flex justify-between items-start mb-1">
@@ -726,43 +784,74 @@ const DashboardView = ({ members = [], generalData = {}, alcoholCount = 0, db, r
         <PartyPopper className="absolute -right-4 -bottom-4 text-white opacity-10 rotate-12" size={140} />
       </div>
         
-      {/* 🟢 修正：練團日誌改為手風琴折疊 */}
+      {/* 🌟 練團日誌：雙頁籤設計 */}
       <div className="bg-white p-4 rounded-[2rem] border border-[#E0E0D9] shadow-sm">
-         <div className="font-bold text-[#725E77] mb-4 flex items-center gap-2 px-1"><Calendar size={18}/> 場次列表</div>
-         <div className="space-y-3">
-            {Object.entries(groupedLogs)
-              .sort(([a], [b]) => b.localeCompare(a)) // 年月反向排序 (最新在上)
-              .map(([month, monthLogs]) => (
-                <div key={month} className="space-y-2">
-                  <button 
-                    onClick={() => toggleMonth(month)}
-                    className="w-full flex justify-between items-center py-2 px-3 bg-[#F0F5F9] rounded-xl text-[#8BA6B9] font-bold tracking-widest transition hover:bg-[#E2EDF3]"
-                  >
-                    <span>{month.replace('-', ' 年 ')} 月份</span>
-                    {openMonths[month] ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                  </button>
-                  {openMonths[month] && (
-                    <div className="space-y-2 pt-1 pb-2">
-                      {monthLogs.map(p => (
-                        <div key={p.date} className="flex justify-between items-start text-sm p-3 bg-slate-50 rounded-xl border border-slate-100 transition hover:shadow-sm">
-                           <div className="flex-1">
-                               <div className="font-bold text-[#6D6176] text-base mb-0.5 tracking-wide">{new Date(p.date).toLocaleDateString()} {p.title}</div>
-                               <div className="text-xs text-[#A29A8C] font-bold mb-1">
-                                  {new Date(p.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} - {p.endTime ? new Date(p.endTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '??'} @ {p.location}
-                               </div>
-                               {p.memo && <div className="text-xs text-[#77ABC0] bg-[#77ABC0]/10 px-2 py-1 rounded w-fit mt-1 flex items-center gap-1"><StickyNote size={10}/> {p.memo}</div>}
-                           </div>
-                           <a href={generateCalendarUrl(p)} target="_blank" className="p-2 text-[#C5B8BF] hover:text-[#77ABC0] hover:bg-[#77ABC0]/10 rounded-lg transition shrink-0 ml-2" title="加入行事曆">
-                              <CalendarPlus size={18}/>
-                           </a>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-            ))}
-            {Object.keys(groupedLogs).length === 0 && <div className="text-xs text-slate-400 text-center py-2">尚無場次安排</div>}
+         <div className="flex bg-[#F0F5F9] p-1 rounded-xl mb-4">
+            <button onClick={() => setLogTab('upcoming')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1 ${logTab === 'upcoming' ? 'bg-white shadow text-[#77ABC0]' : 'text-[#8BA6B9]'}`}><Calendar size={14}/> 待補場次</button>
+            <button onClick={() => setLogTab('history')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1 ${logTab === 'history' ? 'bg-white shadow text-[#77ABC0]' : 'text-[#8BA6B9]'}`}><Archive size={14}/> 歷史紀錄</button>
          </div>
+
+         {/* 頁籤一：即將到來 */}
+         {logTab === 'upcoming' && (
+           <div className="space-y-3 animate-in fade-in slide-in-from-left-4">
+              {upcomingPractices.length === 0 ? (
+                <div className="text-xs text-slate-400 text-center py-6">目前沒有即將到來的練團</div>
+              ) : (
+                upcomingPractices.map(p => (
+                  <div key={p.date} className="flex justify-between items-start text-sm p-4 bg-slate-50 rounded-xl border border-slate-100 transition hover:shadow-sm">
+                     <div className="flex-1">
+                         <div className="font-bold text-[#6D6176] text-base mb-0.5 tracking-wide">{new Date(p.date).toLocaleDateString()} {p.title}</div>
+                         <div className="text-xs text-[#A29A8C] font-bold mb-1">
+                            {new Date(p.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} - {p.endTime ? new Date(p.endTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '??'} @ {p.location}
+                         </div>
+                         {p.memo && <div className="text-xs text-[#77ABC0] bg-[#77ABC0]/10 px-2 py-1 rounded w-fit mt-1 flex items-center gap-1"><StickyNote size={10}/> {p.memo}</div>}
+                     </div>
+                     <a href="#" onClick={(e) => handleAddToCalendar(e, p)} className="p-2 text-[#C5B8BF] hover:text-[#77ABC0] hover:bg-[#77ABC0]/10 rounded-lg transition shrink-0 ml-2" title="加入行事曆">
+                        <CalendarPlus size={20}/>
+                     </a>
+                  </div>
+                ))
+              )}
+           </div>
+         )}
+
+         {/* 頁籤二：歷史紀錄 (依月份折疊) */}
+         {logTab === 'history' && (
+           <div className="space-y-3 animate-in fade-in slide-in-from-right-4">
+              {Object.keys(groupedHistoryLogs).length === 0 ? (
+                <div className="text-xs text-slate-400 text-center py-6">尚無歷史紀錄</div>
+              ) : (
+                Object.entries(groupedHistoryLogs).map(([month, monthLogs]) => (
+                  <div key={month} className="space-y-2">
+                    <button 
+                      onClick={() => toggleMonth(month)}
+                      className="w-full flex justify-between items-center py-2 px-3 bg-[#F0F5F9] rounded-xl text-[#8BA6B9] font-bold tracking-widest transition hover:bg-[#E2EDF3]"
+                    >
+                      <span>{month.replace('-', ' 年 ')} 月份</span>
+                      {openMonths[month] ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                    </button>
+                    {openMonths[month] && (
+                      <div className="space-y-2 pt-1 pb-2">
+                        {monthLogs.map(p => (
+                          <div key={p.date} className="flex justify-between items-start text-sm p-3 bg-white rounded-xl border border-slate-100 shadow-sm opacity-80">
+                             <div className="flex-1">
+                                 <div className="font-bold text-[#6D6176] text-base mb-0.5 tracking-wide line-through decoration-slate-300">{new Date(p.date).toLocaleDateString()} {p.title}</div>
+                                 <div className="text-xs text-[#A29A8C] font-bold">
+                                    {new Date(p.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} @ {p.location}
+                                 </div>
+                             </div>
+                             <a href="#" onClick={(e) => handleAddToCalendar(e, p)} className="p-2 text-[#C5B8BF] hover:text-[#77ABC0] hover:bg-[#77ABC0]/10 rounded-lg transition shrink-0 ml-2" title="補加行事曆">
+                                <CalendarPlus size={18}/>
+                             </a>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+           </div>
+         )}
       </div>
 
       <div>
@@ -791,7 +880,7 @@ const DashboardView = ({ members = [], generalData = {}, alcoholCount = 0, db, r
                   </div>
                 </div>
                 <div className="flex gap-1.5 overflow-x-auto max-w-[120px] scrollbar-hide">
-                  {practices.map(p => {
+                  {upcomingPractices.map(p => {
                     const dateStr = p.date ? p.date.split('T')[0] : ''; 
                     if (!dateStr) return null;
                     const isAttending = m.attendance?.includes(dateStr);
@@ -850,7 +939,6 @@ const SessionLogManager = ({ sessions = [], practices = [], members = [], settin
   const [showManualCreate, setShowManualCreate] = useState(false);
   const [manualDate, setManualDate] = useState(new Date().toISOString().split('T')[0]);
 
-  // ✅ 功能一：練團日誌群組化與手風琴狀態
   const groupedLogs = useMemo(() => {
     return safeSessions.reduce((acc, s) => {
       if (!s.date) return acc;
@@ -933,7 +1021,6 @@ const SessionLogManager = ({ sessions = [], practices = [], members = [], settin
         </div>
       )}
 
-      {/* ✅ 實裝：練團日誌手風琴列表 */}
       <div className="space-y-4">
         {Object.entries(groupedLogs)
           .sort(([a], [b]) => b.localeCompare(a))
@@ -1287,13 +1374,13 @@ const PracticeFeeCalculator = ({ session, members = [], settings = {}, role = {}
             {editingBank && <button onClick={handleUpdateBank}><Check size={16} className="text-[#77ABC0]"/></button>}
           </div>
       </div>
-      <button onClick={copyText} className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition bg-[#77ABC0] text-white`}>{<Copy size={16}/>} 複製請款文</button>
+      <button onClick={copyText} className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition bg-[#77ABC0] text-white`}><Copy size={16}/> 複製請款文</button>
     </div>
   );
 };
 
 const MiscFeeCalculator = ({ session, members = [], db }) => {
-  const [items, useState] = React.useState(session.miscExpenses || []); 
+  const [items, setItems] = React.useState(session.miscExpenses || []); 
   const [newItem, setNewItem] = React.useState({ item: '', amount: '', payerId: '', splitters: [] });
   const [showDetails, setShowDetails] = React.useState(false); 
   
@@ -1461,7 +1548,6 @@ const AlcoholFeeCalculator = ({ members = [], settings = {} }) => {
   );
 };
 
-// 🛡️ 修正：酒櫃改為三個頁籤 (庫存、歷史、計算機)
 const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role = {}, user }) => {
   const [tab, setTab] = useState('list'); 
   const [showAdd, setShowAdd] = useState(false);
@@ -1479,7 +1565,6 @@ const AlcoholManager = ({ alcohols = [], members = [], settings = {}, db, role =
   const alcoholOptions = Array.isArray(settings?.alcoholTypes) ? settings.alcoholTypes : ['紅酒', '白酒', '清酒', '氣泡酒', '啤酒', '威士忌', '其他'];
   const safeAlcohols = Array.isArray(alcohols) ? alcohols : [];
 
-  // --- 資料分群邏輯 ---
   const historyAlcohols = safeAlcohols.filter(a => a.isEmptied === true);
   const activeAlcohols = safeAlcohols.filter(a => a.isEmptied !== true);
   const archivedAlcohols = activeAlcohols.filter(a => a.date === 'archived');
@@ -1863,7 +1948,6 @@ const TechView = ({ songs = [], db, role, user }) => {
       if (!newSong.title || !db) return; 
       
       let finalLinks = [...(newSong.links || [])];
-      // v6.1 防呆修正：自動收納尚未點擊 + 號的連結
       if (newLinkUrl.trim()) {
           finalLinks.push({ url: newLinkUrl.trim(), label: newLinkLabel.trim() || '連結' });
       }
@@ -1909,7 +1993,6 @@ const TechView = ({ songs = [], db, role, user }) => {
     if (!editForm.title || !db) return;
     
     let finalLinks = [...(editForm.links || [])];
-    // v6.1 防呆修正：自動收納尚未點擊 + 號的連結
     if (newLinkUrl.trim()) {
         finalLinks.push({ url: newLinkUrl.trim(), label: newLinkLabel.trim() || '連結' });
     }
